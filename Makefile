@@ -7,8 +7,10 @@ PLATFORM_BINARY := dist/larky-darwin-$(GOARCH)
 
 build:
 	mkdir -p dist
-	CGO_ENABLED=1 $(GO) build -trimpath -ldflags "-s -w -X github.com/jtsang4/larky/internal/cli.Version=$(VERSION)" -o $(PLATFORM_BINARY) ./cmd/larky
-	cp $(PLATFORM_BINARY) dist/larky
+	CGO_ENABLED=1 $(GO) build -trimpath -ldflags "-s -w -X github.com/jtsang4/larky/internal/cli.Version=$(VERSION)" -o $(PLATFORM_BINARY).tmp ./cmd/larky
+	mv -f $(PLATFORM_BINARY).tmp $(PLATFORM_BINARY)
+	cp $(PLATFORM_BINARY) dist/larky.tmp
+	mv -f dist/larky.tmp dist/larky
 
 test:
 	$(GO) test ./...

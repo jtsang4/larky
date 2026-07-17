@@ -126,7 +126,7 @@ func (r *Runner) Plan() (Plan, error) {
 			{Level: 0, Name: "contract", Purpose: "format, schemas, parsers, and plugin contracts", Commands: []string{"gofmt -l cmd internal", "go test ./internal/contract ./internal/larkevent ./internal/plugincheck"}},
 			{Level: 1, Name: "functional", Purpose: "all deterministic unit and component tests", Commands: []string{"go test ./..."}},
 			{Level: 2, Name: "concurrency", Purpose: "static analysis and race detection", Commands: []string{"go vet ./...", "go test -race ./..."}},
-			{Level: 3, Name: "host-e2e", Purpose: "built binary, fake Lark, exact-session routing, and host plugin validation", Commands: []string{"go build ./cmd/larky", "go test ./internal/integration -count=1", "claude plugin validate plugins/claude --strict"}},
+			{Level: 3, Name: "host-e2e", Purpose: "built binary, event subprocess, exact-session routing, live rebuild, and host plugin validation", Commands: []string{"make build", "go test ./internal/integration -count=1", "LARKY_ATOMIC_REBUILD_TEST=1 go test ./internal/integration -run TestBuiltBinaryIsAtomicallyReplacedWhileSidecarRuns -count=1", "claude plugin validate plugins/claude --strict"}},
 			{Level: 4, Name: "live-e2e", Purpose: "real CoreGraphics away state, real Lark Card 2.0 callback, and exact host session", NeedsHuman: true},
 		},
 	}, nil
@@ -209,8 +209,9 @@ func (r *Runner) commands(runDir string, through int) []commandSpec {
 		{1, "all-tests", []string{"go", "test", "./..."}, false},
 		{2, "go-vet", []string{"go", "vet", "./..."}, false},
 		{2, "race-tests", []string{"go", "test", "-race", "./..."}, false},
-		{3, "build", []string{"go", "build", "-o", filepath.Join(runDir, "larky"), "./cmd/larky"}, false},
+		{3, "build", []string{"make", "build"}, false},
 		{3, "integration", []string{"go", "test", "./internal/integration", "-count=1"}, false},
+		{3, "atomic-rebuild", []string{"env", "LARKY_ATOMIC_REBUILD_TEST=1", "go", "test", "./internal/integration", "-run", "TestBuiltBinaryIsAtomicallyReplacedWhileSidecarRuns", "-count=1"}, false},
 		{3, "claude-plugin", []string{"claude", "plugin", "validate", "plugins/claude", "--strict"}, false},
 	}
 	result := make([]commandSpec, 0, len(all))

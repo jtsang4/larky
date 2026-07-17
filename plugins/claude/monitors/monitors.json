@@ -1,7 +1,7 @@
 [
   {
     "name": "larky-session-inbox",
-    "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/larky\" subscribe --platform claude --session-id \"${CLAUDE_CODE_SESSION_ID}\"",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/larky\" subscribe --platform claude",
     "description": "Lark replies routed to this exact Claude Code session"
   }
 ]

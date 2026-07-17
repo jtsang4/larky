@@ -369,7 +369,8 @@ func (s *Server) startCodexWorker(ctx context.Context, key string) {
 
 func (s *Server) wakeCodex(ctx context.Context, reply contract.RoutedReply) error {
 	prompt := wakePrompt(reply)
-	cmd := exec.CommandContext(ctx, s.cfg.CodexCLI, "exec", "resume", reply.SessionID, prompt, "--json")
+	cmd := exec.CommandContext(ctx, s.cfg.CodexCLI, "exec", "resume", reply.SessionID, "-", "--json")
+	cmd.Stdin = strings.NewReader(prompt)
 	if reply.CWD != "" {
 		if info, err := os.Stat(reply.CWD); err == nil && info.IsDir() {
 			cmd.Dir = reply.CWD

@@ -81,8 +81,12 @@ func validateMonitor(path string) error {
 	if err := json.Unmarshal(data, &monitors); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	if len(monitors) != 1 || !strings.Contains(fmt.Sprint(monitors[0]["command"]), "CLAUDE_CODE_SESSION_ID") {
-		return errors.New("Claude monitor must subscribe with CLAUDE_CODE_SESSION_ID")
+	if len(monitors) != 1 {
+		return errors.New("Claude plugin must define exactly one Larky monitor")
+	}
+	command := fmt.Sprint(monitors[0]["command"])
+	if !strings.Contains(command, "subscribe --platform claude") || strings.Contains(command, "--session-id") {
+		return errors.New("Claude monitor must subscribe using CLAUDE_CODE_SESSION_ID from its environment")
 	}
 	return nil
 }
