@@ -35,7 +35,7 @@ func TestSidecarRoutesSyntheticEventToExactClaudeSubscriber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.RecordDelivery(req.ID, "om-card", "oc-chat", false); err != nil {
+	if err := service.RecordDelivery(req.ID, "om-card", "oc-chat", "bot", false); err != nil {
 		t.Fatal(err)
 	}
 

@@ -2,6 +2,7 @@ package request
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestCreateIsIdempotentAndDeliveryBuildsMapping(t *testing.T) {
 	if err != nil || created || second.ID != first.ID {
 		t.Fatalf("expected idempotent request: %#v created=%v err=%v", second, created, err)
 	}
-	if err := service.RecordDelivery(first.ID, "om-card", "oc-chat", false); err != nil {
+	if err := service.RecordDelivery(first.ID, "om-card", "oc-chat", "bot", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.View(func(db *state.Database) error {
@@ -58,7 +59,7 @@ func TestDirectMessageTargetLearnsChatFromDelivery(t *testing.T) {
 	if req.ChatID != "" || req.TargetUserID != "ou-target" {
 		t.Fatalf("unexpected target before delivery: %#v", req)
 	}
-	if err := service.RecordDelivery(req.ID, "om-card", "oc-resolved", false); err != nil {
+	if err := service.RecordDelivery(req.ID, "om-card", "oc-resolved", "bot", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.View(func(db *state.Database) error {
@@ -69,5 +70,20 @@ func TestDirectMessageTargetLearnsChatFromDelivery(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRecordDeliveryRejectsIdentityThatCannotReachConsumer(t *testing.T) {
+	cfg := config.Config{
+		ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"}, RequestTTL: time.Hour, EventIdentity: "bot",
+	}
+	service := NewService(state.New(filepath.Join(t.TempDir(), "state.json")), cfg)
+	req, _, err := service.Create(CreateInput{Platform: contract.PlatformClaude, SessionID: "session", Message: "Done."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = service.RecordDelivery(req.ID, "om-card", "oc-chat", "user", false)
+	if err == nil || !strings.Contains(err.Error(), `delivery identity "user" does not match event consumer identity "bot"`) {
+		t.Fatalf("expected identity mismatch error, got %v", err)
 	}
 }

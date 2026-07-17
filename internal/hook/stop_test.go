@@ -64,7 +64,7 @@ func TestStopDirectMessageContinuationRequiresBothDeliveryIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"direct message to user ou-user", "<MESSAGE_ID>", "<CHAT_ID_FROM_RESULT>", "message_id and chat_id returned by lark-im"} {
+	for _, want := range []string{"direct message to user ou-user", "<MESSAGE_ID>", "<CHAT_ID_FROM_RESULT>", "<IDENTITY_FROM_RESULT>", "message_id, chat_id, and actual identity returned by lark-im", "--as bot", "result reports identity bot"} {
 		if !strings.Contains(decision.Reason, want) {
 			t.Fatalf("continuation prompt missing %q:\n%s", want, decision.Reason)
 		}

@@ -111,9 +111,17 @@ func (s *Service) Create(input CreateInput) (*contract.InteractionRequest, bool,
 	return result, created, err
 }
 
-func (s *Service) RecordDelivery(requestID, messageID, chatID string, degraded bool) error {
-	if requestID == "" || messageID == "" || chatID == "" {
-		return errors.New("request_id, message_id, and chat_id are required")
+func (s *Service) RecordDelivery(requestID, messageID, chatID, senderIdentity string, degraded bool) error {
+	if requestID == "" || messageID == "" || chatID == "" || senderIdentity == "" {
+		return errors.New("request_id, message_id, chat_id, and sender identity are required")
+	}
+	senderIdentity = strings.ToLower(strings.TrimSpace(senderIdentity))
+	expectedIdentity := strings.ToLower(strings.TrimSpace(s.cfg.EventIdentity))
+	if expectedIdentity == "" {
+		expectedIdentity = "bot"
+	}
+	if senderIdentity != expectedIdentity {
+		return fmt.Errorf("delivery identity %q does not match event consumer identity %q; resend the message using the matching identity", senderIdentity, expectedIdentity)
 	}
 	return s.store.Update(func(db *state.Database) error {
 		req := db.Requests[strings.ToUpper(requestID)]
@@ -127,7 +135,7 @@ func (s *Service) RecordDelivery(requestID, messageID, chatID string, degraded b
 			return errors.New("message is already assigned to another request")
 		}
 		now := s.now().UTC()
-		delivery := contract.Delivery{RequestID: req.ID, MessageID: messageID, ChatID: chatID, Degraded: degraded, CreatedAt: now}
+		delivery := contract.Delivery{RequestID: req.ID, MessageID: messageID, ChatID: chatID, SenderIdentity: senderIdentity, Degraded: degraded, CreatedAt: now}
 		db.Deliveries[messageID] = delivery
 		req.MessageID = messageID
 		req.ChatID = chatID

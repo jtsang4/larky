@@ -69,11 +69,12 @@ type InteractionRequest struct {
 }
 
 type Delivery struct {
-	RequestID string    `json:"request_id"`
-	MessageID string    `json:"message_id"`
-	ChatID    string    `json:"chat_id"`
-	Degraded  bool      `json:"degraded,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	RequestID      string    `json:"request_id"`
+	MessageID      string    `json:"message_id"`
+	ChatID         string    `json:"chat_id"`
+	SenderIdentity string    `json:"sender_identity"`
+	Degraded       bool      `json:"degraded,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type IncomingKind string

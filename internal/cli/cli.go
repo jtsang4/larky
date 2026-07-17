@@ -70,7 +70,7 @@ Usage:
   larky config show
   larky doctor
   larky hook stop --platform claude|codex
-  larky delivery record --request-id <ID> --message-id <om_...> --chat-id <oc_...>
+  larky delivery record --request-id <ID> --message-id <om_...> --chat-id <oc_...> --identity bot|user
   larky delivery fail --request-id <ID>
   larky sidecar run|status|stop
   larky subscribe --platform claude --session-id <UUID>
@@ -216,11 +216,12 @@ func runDelivery(args []string, stdout, stderr io.Writer) error {
 		requestID := flags.String("request-id", "", "larky request id")
 		messageID := flags.String("message-id", "", "outbound Lark message id")
 		chatID := flags.String("chat-id", "", "target Lark chat id")
+		identity := flags.String("identity", "", "identity returned by lark-im: bot or user")
 		degraded := flags.Bool("degraded", false, "plain-text fallback was used")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		if err := service.RecordDelivery(*requestID, *messageID, *chatID, *degraded); err != nil {
+		if err := service.RecordDelivery(*requestID, *messageID, *chatID, *identity, *degraded); err != nil {
 			return err
 		}
 		if err := sidecar.Ensure(cfg, ""); err != nil {

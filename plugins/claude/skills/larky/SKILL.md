@@ -10,9 +10,9 @@ Follow the request-specific instructions in the Larky continuation or routed eve
 ## Send a notification
 
 1. Read the Larky continuation contract, including the target `chat_id`, `request_id`, status, expiry, required actions, and receipt command.
-2. Use `lark-im` to send the required Card 2.0 message. Keep the task summary concise, include actual verification evidence, and redact secrets, sensitive paths, and full agent session IDs.
+2. Use `lark-im` to send the required Card 2.0 message with the identity explicitly required by the continuation. The send identity must match Larky's event-consumer identity (normally `bot`); otherwise card callbacks cannot reach Larky. Keep the task summary concise, include actual verification evidence, and redact secrets, sensitive paths, and full agent session IDs.
 3. Keep callback payloads limited to the version, Larky `request_id`, allowed action, and optional `choice_id`. Never put a session ID, local path, task body, command, or permission decision in a callback.
-4. Capture the outbound `message_id` from the skill result and run the exact `larky delivery record` command from the continuation.
+4. Capture the outbound `message_id`, `chat_id`, and actual `identity` from the skill result. Confirm that the returned identity matches the continuation, then run the exact `larky delivery record` command with those real values. Never record a delivery sent by a different identity; resend it correctly first.
 5. If card delivery fails twice, send the instructed plain-text fallback, record it with `--degraded`, and preserve the request code. If every delivery fails, run the supplied `larky delivery fail` command.
 
 Do not finish the continuation until one delivery receipt command succeeds.
