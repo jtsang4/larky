@@ -34,6 +34,7 @@ flowchart LR
 - CoreGraphics 检测显示器休眠与锁屏；只有 `display_asleep OR screen_locked` 才通知。
 - Card 2.0 是首版默认交互面，包含继续、关闭、重试、取消、选项与文字表单契约。
 - `card.action.trigger` 与 `im.message.receive_v1` 各只有一个长期 consumer。
+- Stop Hook 会等到两个 consumer 都发出官方 ready marker 后才允许 Agent 发送卡片；`sidecar status` 会分别报告就绪状态。
 - Claude Code 使用 Stop Hook + Plugin Monitor；Codex 使用 Stop Hook + 精确 session resume adapter。
 - request TTL、允许的飞书用户/群、回调 action allowlist、事件去重、原子 claim 和按 session 串行队列。
 - pending request 期间仅阻止系统 idle sleep，不阻止显示器休眠。

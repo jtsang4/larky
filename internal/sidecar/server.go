@@ -27,6 +27,8 @@ import (
 
 var ErrAlreadyRunning = errors.New("larky sidecar is already running")
 
+var requiredEventKeys = []string{"card.action.trigger", "im.message.receive_v1"}
+
 type Options struct {
 	DisableEvents bool
 	Logger        *log.Logger
@@ -43,6 +45,8 @@ type Server struct {
 	mu            sync.Mutex
 	subscriptions map[string]struct{}
 	workers       map[string]struct{}
+	eventsEnabled bool
+	eventReady    map[string]bool
 }
 
 func Run(ctx context.Context, cfg config.Config, options Options) error {
@@ -81,17 +85,23 @@ func Run(ctx context.Context, cfg config.Config, options Options) error {
 		logger = log.New(os.Stderr, "larky: ", log.LstdFlags|log.Lmicroseconds)
 	}
 	store := state.New(cfg.DatabasePath())
+	eventsEnabled := !options.DisableEvents && os.Getenv("LARKY_EVENT_SOURCE") != "disabled"
 	server := &Server{
 		cfg: cfg, store: store, router: router.New(store), logger: logger,
 		startedAt: time.Now().UTC(), cancel: cancel,
 		subscriptions: make(map[string]struct{}), workers: make(map[string]struct{}),
+		eventsEnabled: eventsEnabled, eventReady: make(map[string]bool),
 	}
 	logger.Printf("sidecar ready pid=%d socket=%s", os.Getpid(), socketPath)
 
-	if !options.DisableEvents && os.Getenv("LARKY_EVENT_SOURCE") != "disabled" {
-		consumer := eventbridge.Consumer{CLI: cfg.LarkCLI, Identity: cfg.EventIdentity, Logger: logger, OnEvent: server.processRawEvent}
-		go consumer.Run(serverCtx, "card.action.trigger")
-		go consumer.Run(serverCtx, "im.message.receive_v1")
+	if eventsEnabled {
+		consumer := eventbridge.Consumer{
+			CLI: cfg.LarkCLI, Identity: cfg.EventIdentity, Logger: logger,
+			OnEvent: server.processRawEvent, OnState: server.setEventState,
+		}
+		for _, eventKey := range requiredEventKeys {
+			go consumer.Run(serverCtx, eventKey)
+		}
 	}
 	go server.codexPump(serverCtx)
 	go server.powerKeeper(serverCtx)
@@ -237,9 +247,18 @@ func (s *Server) writeResponse(conn net.Conn, value response) bool {
 }
 
 func (s *Server) status() (Status, error) {
-	status := Status{PID: os.Getpid(), StartedAt: s.startedAt.Format(time.RFC3339), PendingByKind: make(map[string]int)}
+	status := Status{
+		PID: os.Getpid(), StartedAt: s.startedAt.Format(time.RFC3339),
+		EventsEnabled: s.eventsEnabled, EventConsumers: make(map[string]bool), PendingByKind: make(map[string]int),
+	}
 	s.mu.Lock()
 	status.Subscribers = len(s.subscriptions)
+	status.EventsReady = s.eventsEnabled
+	for _, eventKey := range requiredEventKeys {
+		ready := s.eventReady[eventKey]
+		status.EventConsumers[eventKey] = ready
+		status.EventsReady = status.EventsReady && ready
+	}
 	s.mu.Unlock()
 	err := s.store.View(func(db *state.Database) error {
 		for _, req := range db.Requests {
@@ -251,6 +270,12 @@ func (s *Server) status() (Status, error) {
 		return nil
 	})
 	return status, err
+}
+
+func (s *Server) setEventState(eventKey string, ready bool) {
+	s.mu.Lock()
+	s.eventReady[eventKey] = ready
+	s.mu.Unlock()
 }
 
 func (s *Server) peekInbox(key string, dueOnly bool) (*state.InboxItem, error) {

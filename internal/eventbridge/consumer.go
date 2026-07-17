@@ -19,6 +19,7 @@ type Consumer struct {
 	Identity string
 	Logger   *log.Logger
 	OnEvent  func(eventKey string, raw []byte)
+	OnState  func(eventKey string, ready bool)
 }
 
 func (c Consumer) Run(ctx context.Context, eventKey string) {
@@ -48,6 +49,12 @@ func (c Consumer) Run(ctx context.Context, eventKey string) {
 }
 
 func (c Consumer) runOnce(ctx context.Context, eventKey string) error {
+	readyReported := false
+	defer func() {
+		if readyReported && c.OnState != nil {
+			c.OnState(eventKey, false)
+		}
+	}()
 	cli := c.CLI
 	if cli == "" {
 		cli = "lark-cli"
@@ -106,6 +113,10 @@ func (c Consumer) runOnce(ctx context.Context, eventKey string) error {
 	go func() { waitDone <- cmd.Wait() }()
 	select {
 	case <-ready:
+		readyReported = true
+		if c.OnState != nil {
+			c.OnState(eventKey, true)
+		}
 		c.logf("event consumer ready: %s", eventKey)
 	case err := <-waitDone:
 		return fmt.Errorf("exit before ready: %w", normalizeExit(err))

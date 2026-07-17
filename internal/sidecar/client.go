@@ -18,11 +18,12 @@ import (
 )
 
 func Ensure(cfg config.Config, executable string) error {
+	requireEvents := os.Getenv("LARKY_EVENT_SOURCE") != "disabled"
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	err := Ping(ctx, cfg)
 	cancel()
 	if err == nil {
-		return nil
+		return waitUntilReady(cfg, requireEvents, time.Now().Add(8*time.Second))
 	}
 	if executable == "" {
 		var resolveErr error
@@ -48,17 +49,28 @@ func Ensure(cfg config.Config, executable string) error {
 	}
 	_ = cmd.Process.Release()
 	_ = logFile.Close()
-	deadline := time.Now().Add(8 * time.Second)
+	return waitUntilReady(cfg, requireEvents, time.Now().Add(8*time.Second))
+}
+
+func waitUntilReady(cfg config.Config, requireEvents bool, deadline time.Time) error {
+	var lastErr error
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-		err = Ping(ctx, cfg)
+		status, err := GetStatus(ctx, cfg)
 		cancel()
-		if err == nil {
+		if err == nil && (!requireEvents || status.EventsReady) {
 			return nil
+		}
+		if err != nil {
+			lastErr = err
+		} else if !status.EventsEnabled {
+			lastErr = errors.New("sidecar event consumers are disabled")
+		} else {
+			lastErr = errors.New("sidecar event consumers are not ready")
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("sidecar did not become ready: %w (see %s)", err, cfg.LogPath())
+	return fmt.Errorf("sidecar did not become ready: %w (see %s)", lastErr, cfg.LogPath())
 }
 
 func Ping(ctx context.Context, cfg config.Config) error {
