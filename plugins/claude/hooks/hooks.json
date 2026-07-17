@@ -1,0 +1,17 @@
+{
+  "description": "Notify through Larky when Claude Code stops while the Mac is away",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/larky\" hook stop --platform claude",
+            "timeout": 15,
+            "statusMessage": "Checking whether Larky should notify you"
+          }
+        ]
+      }
+    ]
+  }
+}

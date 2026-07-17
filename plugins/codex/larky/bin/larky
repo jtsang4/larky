@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+plugin_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+arch=$(uname -m)
+case "$arch" in
+  arm64|aarch64) arch=arm64 ;;
+  x86_64|amd64) arch=amd64 ;;
+  *) echo "larky: unsupported architecture: $arch" >&2; exit 1 ;;
+esac
+
+for candidate in \
+  "$plugin_root/bin/larky-darwin-$arch" \
+  "$plugin_root/../../../dist/larky-darwin-$arch" \
+  "$plugin_root/../../../dist/larky"
+do
+  if [ -x "$candidate" ]; then
+    exec "$candidate" "$@"
+  fi
+done
+
+echo "larky: packaged binary not found; run 'make build' in the source repository" >&2
+exit 1

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Larky"
+  short_description: "Send and route Lark cards for paused coding tasks"
+  default_prompt: "Use $larky to report this paused coding task through Lark."

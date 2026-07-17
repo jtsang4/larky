@@ -1,0 +1,14 @@
+{
+  "name": "larky",
+  "description": "Continue paused coding-agent tasks from Lark interactive cards.",
+  "owner": {
+    "name": "James Tsang"
+  },
+  "plugins": [
+    {
+      "name": "larky",
+      "source": "./plugins/larky",
+      "description": "Route Lark cards and replies back to exact Claude Code sessions."
+    }
+  ]
+}

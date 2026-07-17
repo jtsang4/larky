@@ -1,0 +1,5 @@
+/dist/
+/.artifacts/
+/.larky/
+*.log
+.DS_Store

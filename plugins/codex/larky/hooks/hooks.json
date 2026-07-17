@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/larky\" hook stop --platform codex",
+            "timeout": 15,
+            "statusMessage": "Checking whether Larky should notify you"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "larky",
+  "interface": {
+    "displayName": "Larky"
+  },
+  "plugins": [
+    {
+      "name": "larky",
+      "source": {
+        "source": "local",
+        "path": "./plugins/larky"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
