@@ -93,7 +93,7 @@ func TestCodexReplyResumesOnlyTheMappedSession(t *testing.T) {
 	fakeOutput := filepath.Join(stateDir, "codex-args.txt")
 	fakeInput := filepath.Join(stateDir, "codex-stdin.txt")
 	fakeCodex := filepath.Join(stateDir, "fake-codex")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$LARKY_FAKE_CODEX_OUT\"\ncat > \"$LARKY_FAKE_CODEX_IN\"\n"
+	script := "#!/bin/sh\ncat > \"$LARKY_FAKE_CODEX_IN\"\nprintf '%s\\n' \"$@\" > \"$LARKY_FAKE_CODEX_OUT\"\n"
 	if err := os.WriteFile(fakeCodex, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
