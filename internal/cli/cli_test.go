@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -94,5 +95,59 @@ func TestHandoffShowFetchesOnlyTheExactArchivedReply(t *testing.T) {
 	}
 	if err := Run(context.Background(), []string{"handoff", "show", "--request-id", req.ID, "--platform", "claude", "--session-id", "another-session"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "exact request") {
 		t.Fatalf("wrong session fetched the reply: %v", err)
+	}
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"handoff", "show", "--request-id", req.ID}, strings.NewReader(""), &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &reply); err != nil || reply.RequestID != req.ID || reply.Text != "show me the result" {
+		t.Fatalf("compact request-id fetch failed: %#v parse=%v raw=%s", reply, err, stdout.String())
+	}
+}
+
+func TestDeliveryShowPreservesAndChunksTheCompleteTurnOutput(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("LARKY_STATE_DIR", stateDir)
+	cfg := config.Config{
+		StateDir: stateDir, TargetUserID: "ou-user", AllowedSenderIDs: []string{"ou-user"},
+		RequestTTL: time.Hour, EventIdentity: "bot", LarkCLI: "lark-cli",
+	}
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	service := requestsvc.NewService(state.New(filepath.Join(stateDir, "state.json")), cfg)
+	output := strings.Repeat("完整正文与代码证据。\n", 1200)
+	req, _, err := service.Create(requestsvc.CreateInput{Platform: contract.PlatformCodex, SessionID: "session", CWD: "/tmp/project", Message: output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := Run(context.Background(), []string{"delivery", "show", "--request-id", req.ID}, strings.NewReader(""), &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var plan contract.DeliveryPlan
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		t.Fatalf("parse delivery plan: %v\n%s", err, stdout.String())
+	}
+	if plan.TurnOutput != "" || plan.TurnOutputPartCount < 2 || !strings.Contains(plan.PartCommandTemplate, "delivery part") {
+		t.Fatalf("long output was inlined instead of exposed as bounded parts: %#v", plan)
+	}
+	var rebuilt strings.Builder
+	for index := 1; index <= plan.TurnOutputPartCount; index++ {
+		stdout.Reset()
+		if err := Run(context.Background(), []string{"delivery", "part", "--request-id", req.ID, "--index", fmt.Sprint(index)}, strings.NewReader(""), &stdout, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		var part contract.DeliveryPart
+		if err := json.Unmarshal(stdout.Bytes(), &part); err != nil || part.Index != index || part.Count != plan.TurnOutputPartCount {
+			t.Fatalf("unexpected output part: %#v parse=%v", part, err)
+		}
+		rebuilt.WriteString(part.Content)
+	}
+	if rebuilt.String() != strings.TrimSpace(output) {
+		t.Fatalf("bounded part fetch lost turn output: got=%d want=%d", rebuilt.Len(), len(strings.TrimSpace(output)))
+	}
+	if plan.CardVersion != "2.0" || !plan.RequireContextForm || plan.RequiredIdentity != "bot" || plan.TargetUserID != "ou-user" || !strings.Contains(plan.RecordCommandTemplate, "--message-id '<MESSAGE_ID_N>'") {
+		t.Fatalf("unexpected delivery plan: %#v", plan)
 	}
 }

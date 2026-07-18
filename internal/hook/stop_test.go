@@ -36,7 +36,7 @@ func TestStopAwayCreatesCardContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Decision != "block" || !strings.Contains(decision.Reason, "Card 2.0") || !strings.Contains(decision.Reason, "delivery record") || !strings.Contains(decision.Reason, "cannot see the agent terminal") || !strings.Contains(decision.Reason, "concrete result itself") || !started {
+	if decision.Decision != "block" || !strings.Contains(decision.Reason, "larky delivery show --request-id") || !strings.Contains(decision.Reason, "飞书传输") || strings.Contains(decision.Reason, "Done and tested") || len(decision.Reason) > 240 || !started {
 		t.Fatalf("unexpected decision: %#v started=%v", decision, started)
 	}
 }
@@ -56,7 +56,7 @@ func TestStopPresentAndRecursiveStopAllow(t *testing.T) {
 	}
 }
 
-func TestStopDirectMessageContinuationRequiresBothDeliveryIDs(t *testing.T) {
+func TestStopDirectMessageContinuationKeepsTransportDetailsOutOfTheTranscript(t *testing.T) {
 	cfg := config.Config{TargetUserID: "ou-user", AllowedSenderIDs: []string{"ou-user"}, RequestTTL: time.Hour}
 	service := request.NewService(state.New(filepath.Join(t.TempDir(), "state.json")), cfg)
 	handler := StopHandler{
@@ -67,9 +67,9 @@ func TestStopDirectMessageContinuationRequiresBothDeliveryIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"direct message to user ou-user", "<MESSAGE_ID>", "<CHAT_ID_FROM_RESULT>", "<IDENTITY_FROM_RESULT>", "message_id, chat_id, and actual identity returned by lark-im", "--as bot", "result reports identity bot"} {
-		if !strings.Contains(decision.Reason, want) {
-			t.Fatalf("continuation prompt missing %q:\n%s", want, decision.Reason)
+	for _, hidden := range []string{"ou-user", "<MESSAGE_ID>", "<CHAT_ID_FROM_RESULT>", "Identity contract", "Notification contract", "/tmp/larky"} {
+		if strings.Contains(decision.Reason, hidden) {
+			t.Fatalf("compact continuation leaked %q:\n%s", hidden, decision.Reason)
 		}
 	}
 }
@@ -89,7 +89,7 @@ func TestCodexRecursiveStopReturnsReplyToTheSameHookSession(t *testing.T) {
 	}
 	_, err = router.New(store).Handle(contract.IncomingEvent{
 		EventID: "evt-a", Kind: contract.IncomingCardAction, MessageID: "om-a", ChatID: "oc-chat", SenderID: "ou-user",
-		RequestHint: req.ID, Action: "retry", Text: "先修复测试",
+		RequestHint: req.ID, Action: "retry", Text: "先修复测试", CallbackToken: "callback-secret", CardContent: `{"schema":"2.0","body":{"elements":[]}}`,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestCodexRecursiveStopReturnsReplyToTheSameHookSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Decision != "block" || !strings.Contains(decision.Reason, "this exact Codex task") || !strings.Contains(decision.Reason, "先修复测试") || !strings.Contains(decision.Reason, "remote user cannot see the host UI") || !strings.Contains(decision.Reason, "concrete requested result") {
+	if decision.Decision != "block" || !strings.Contains(decision.Reason, "[Larky · 飞书回复 · "+req.ID+"]") || !strings.Contains(decision.Reason, "先修复测试") || strings.Contains(decision.Reason, "callback-secret") || strings.Contains(decision.Reason, `"schema":"2.0"`) || strings.Contains(decision.Reason, "original-card-content") {
 		t.Fatalf("unexpected same-task continuation: %#v", decision)
 	}
 	stored, err := service.GetForSession(req.ID, contract.PlatformCodex, "session-a")
@@ -113,7 +113,7 @@ func TestCodexRecursiveStopReturnsReplyToTheSameHookSession(t *testing.T) {
 		t.Fatalf("handoff evidence was not persisted: %#v", stored)
 	}
 	followup, err := handler.Handle(context.Background(), contract.PlatformCodex, strings.NewReader(`{"session_id":"session-a","turn_id":"turn-b","stop_hook_active":true,"last_assistant_message":"Tests passed."}`))
-	if err != nil || followup.Decision != "block" || !strings.Contains(followup.Reason, "Card 2.0") {
+	if err != nil || followup.Decision != "block" || !strings.Contains(followup.Reason, "larky delivery show --request-id") {
 		t.Fatalf("remote result should create a follow-up notification: %#v err=%v", followup, err)
 	}
 	latest, err := service.LatestForSession(contract.PlatformCodex, "session-a", "turn-b")

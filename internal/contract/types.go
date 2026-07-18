@@ -51,35 +51,37 @@ const (
 )
 
 type InteractionRequest struct {
-	ID                string        `json:"id"`
-	ShortCode         string        `json:"short_code"`
-	IdempotencyKey    string        `json:"idempotency_key"`
-	Platform          Platform      `json:"platform"`
-	SessionID         string        `json:"session_id"`
-	TurnID            string        `json:"turn_id,omitempty"`
-	PreviousRequestID string        `json:"previous_request_id,omitempty"`
-	CWD               string        `json:"cwd,omitempty"`
-	Project           string        `json:"project,omitempty"`
-	Summary           string        `json:"summary"`
-	Status            RequestStatus `json:"status"`
-	State             RequestState  `json:"state"`
-	ChatID            string        `json:"chat_id,omitempty"`
-	TargetUserID      string        `json:"target_user_id,omitempty"`
-	AllowedSenderIDs  []string      `json:"allowed_sender_ids,omitempty"`
-	MessageID         string        `json:"message_id,omitempty"`
-	MessageIDs        []string      `json:"message_ids,omitempty"`
-	DegradedDelivery  bool          `json:"degraded_delivery,omitempty"`
-	AwayDetected      bool          `json:"away_detected"`
-	DisplayAsleep     bool          `json:"display_asleep,omitempty"`
-	ScreenLocked      bool          `json:"screen_locked,omitempty"`
-	AwayMethod        string        `json:"away_method,omitempty"`
-	ClaimedEventID    string        `json:"claimed_event_id,omitempty"`
-	HandoffEventID    string        `json:"handoff_event_id,omitempty"`
-	HandoffMode       HandoffMode   `json:"handoff_mode,omitempty"`
-	HandoffAt         time.Time     `json:"handoff_at,omitempty"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
-	ExpiresAt         time.Time     `json:"expires_at"`
+	ID                  string        `json:"id"`
+	ShortCode           string        `json:"short_code"`
+	IdempotencyKey      string        `json:"idempotency_key"`
+	Platform            Platform      `json:"platform"`
+	SessionID           string        `json:"session_id"`
+	TurnID              string        `json:"turn_id,omitempty"`
+	PreviousRequestID   string        `json:"previous_request_id,omitempty"`
+	CWD                 string        `json:"cwd,omitempty"`
+	Project             string        `json:"project,omitempty"`
+	Summary             string        `json:"summary"`
+	TurnOutput          string        `json:"turn_output,omitempty"`
+	TurnOutputTruncated bool          `json:"turn_output_truncated,omitempty"`
+	Status              RequestStatus `json:"status"`
+	State               RequestState  `json:"state"`
+	ChatID              string        `json:"chat_id,omitempty"`
+	TargetUserID        string        `json:"target_user_id,omitempty"`
+	AllowedSenderIDs    []string      `json:"allowed_sender_ids,omitempty"`
+	MessageID           string        `json:"message_id,omitempty"`
+	MessageIDs          []string      `json:"message_ids,omitempty"`
+	DegradedDelivery    bool          `json:"degraded_delivery,omitempty"`
+	AwayDetected        bool          `json:"away_detected"`
+	DisplayAsleep       bool          `json:"display_asleep,omitempty"`
+	ScreenLocked        bool          `json:"screen_locked,omitempty"`
+	AwayMethod          string        `json:"away_method,omitempty"`
+	ClaimedEventID      string        `json:"claimed_event_id,omitempty"`
+	HandoffEventID      string        `json:"handoff_event_id,omitempty"`
+	HandoffMode         HandoffMode   `json:"handoff_mode,omitempty"`
+	HandoffAt           time.Time     `json:"handoff_at,omitempty"`
+	CreatedAt           time.Time     `json:"created_at"`
+	UpdatedAt           time.Time     `json:"updated_at"`
+	ExpiresAt           time.Time     `json:"expires_at"`
 }
 
 type Delivery struct {
@@ -133,12 +135,34 @@ type RoutedReply struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-type MonitorNotification struct {
-	Type         string `json:"type"`
-	FetchCommand string `json:"fetch_command"`
-	RequestID    string `json:"request_id"`
-	Action       string `json:"action"`
-	Instruction  string `json:"instruction"`
+type DeliveryPlan struct {
+	Type                  string        `json:"type"`
+	RequestID             string        `json:"request_id"`
+	Status                RequestStatus `json:"status"`
+	Project               string        `json:"project"`
+	Platform              Platform      `json:"platform"`
+	ExpiresAt             time.Time     `json:"expires_at"`
+	TargetChatID          string        `json:"target_chat_id,omitempty"`
+	TargetUserID          string        `json:"target_user_id,omitempty"`
+	RequiredIdentity      string        `json:"required_identity"`
+	CardVersion           string        `json:"card_version"`
+	TurnOutput            string        `json:"turn_output,omitempty"`
+	TurnOutputPartCount   int           `json:"turn_output_part_count"`
+	PartCommandTemplate   string        `json:"part_command_template,omitempty"`
+	TurnOutputTruncated   bool          `json:"turn_output_truncated,omitempty"`
+	RequireContextForm    bool          `json:"require_context_form"`
+	Actions               []string      `json:"actions"`
+	RecordCommandTemplate string        `json:"record_command_template"`
+	DegradedCommand       string        `json:"degraded_record_command_template"`
+	FailureCommand        string        `json:"failure_command"`
+}
+
+type DeliveryPart struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Index     int    `json:"index"`
+	Count     int    `json:"count"`
+	Content   string `json:"content"`
 }
 
 type HookInput struct {

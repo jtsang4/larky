@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jtsang4/larky/internal/codexhooks"
 	"github.com/jtsang4/larky/internal/config"
@@ -79,9 +80,11 @@ Usage:
   larky update [--version <vX.Y.Z>] [--claude|--codex|--all|--binary-only]
   larky hook stop --platform claude|codex
   larky hook session-start --platform codex
-	  larky delivery record --request-id <ID> --message-id <om_...> [--message-id <om_...>] --chat-id <oc_...> --identity bot|user
+  larky delivery show --request-id <ID>
+  larky delivery part --request-id <ID> --index <N>
+  larky delivery record --request-id <ID> --message-id <om_...> [--message-id <om_...>] --chat-id <oc_...> --identity bot|user
   larky delivery fail --request-id <ID>
-  larky handoff show --request-id <ID> --platform claude|codex --session-id <ID>
+  larky handoff show --request-id <ID> [--platform claude|codex --session-id <ID>]
   larky sidecar run|status|stop
   larky subscribe --platform claude --session-id <UUID>
   larky debug ingest --event-key <key> < event.json
@@ -287,7 +290,7 @@ func runHook(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 
 func runDelivery(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("delivery requires record or fail")
+		return errors.New("delivery requires show, part, record, or fail")
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -299,6 +302,47 @@ func runDelivery(args []string, stdout, stderr io.Writer) error {
 	}
 	service := requestsvc.NewService(state.New(cfg.DatabasePath()), cfg)
 	switch args[0] {
+	case "show":
+		flags := flag.NewFlagSet("delivery show", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		requestID := flags.String("request-id", "", "larky request id")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("delivery show does not accept positional arguments")
+		}
+		req, err := service.Get(*requestID)
+		if err != nil {
+			return err
+		}
+		if req == nil {
+			return errors.New("delivery request was not found")
+		}
+		return writeJSON(stdout, buildDeliveryPlan(req, cfg))
+	case "part":
+		flags := flag.NewFlagSet("delivery part", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		requestID := flags.String("request-id", "", "larky request id")
+		index := flags.Int("index", 0, "one-based output part index")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("delivery part does not accept positional arguments")
+		}
+		req, err := service.Get(*requestID)
+		if err != nil {
+			return err
+		}
+		if req == nil {
+			return errors.New("delivery request was not found")
+		}
+		parts := splitTurnOutput(turnOutputForDelivery(req), 12*1024)
+		if *index < 1 || *index > len(parts) {
+			return fmt.Errorf("delivery part index must be between 1 and %d", len(parts))
+		}
+		return writeJSON(stdout, contract.DeliveryPart{Type: "larky_turn_output_part", RequestID: req.ID, Index: *index, Count: len(parts), Content: parts[*index-1]})
 	case "record":
 		flags := flag.NewFlagSet("delivery record", flag.ContinueOnError)
 		flags.SetOutput(stderr)
@@ -353,25 +397,37 @@ func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if flags.NArg() != 0 {
 		return errors.New("handoff show does not accept positional arguments")
 	}
-	if *sessionID == "" {
+	if *platformValue != "" && *sessionID == "" {
 		*sessionID = os.Getenv("CLAUDE_CODE_SESSION_ID")
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	platform := contract.Platform(*platformValue)
 	service := requestsvc.NewService(state.New(cfg.DatabasePath()), cfg)
-	request, err := service.GetForSession(*requestID, platform, *sessionID)
-	if err != nil {
-		return err
-	}
-	if request == nil {
-		return errors.New("no request exists for that exact request, platform, and session")
+	useExactSession := *platformValue != "" || *sessionID != ""
+	platform := contract.Platform(*platformValue)
+	if useExactSession {
+		if !platform.Valid() || *sessionID == "" {
+			return errors.New("platform and session-id must be supplied together")
+		}
+		request, err := service.GetForSession(*requestID, platform, *sessionID)
+		if err != nil {
+			return err
+		}
+		if request == nil {
+			return errors.New("no request exists for that exact request, platform, and session")
+		}
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		reply, err := service.GetHandoffReply(*requestID, platform, *sessionID)
+		var reply *contract.RoutedReply
+		var err error
+		if useExactSession {
+			reply, err = service.GetHandoffReply(*requestID, platform, *sessionID)
+		} else {
+			reply, err = service.GetHandoffReplyByID(*requestID)
+		}
 		if err != nil {
 			return err
 		}
@@ -387,6 +443,86 @@ func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
+}
+
+func buildDeliveryPlan(req *contract.InteractionRequest, cfg config.Config) contract.DeliveryPlan {
+	identity := strings.ToLower(strings.TrimSpace(cfg.EventIdentity))
+	if identity == "" {
+		identity = "bot"
+	}
+	chatID := req.ChatID
+	if chatID == "" {
+		chatID = "<CHAT_ID_FROM_RESULT>"
+	}
+	record := fmt.Sprintf("larky delivery record --request-id %s --message-id '<MESSAGE_ID_1>' [--message-id '<MESSAGE_ID_N>' ...] --chat-id %s --identity '<IDENTITY_FROM_RESULT>'", quoteShell(req.ID), quoteShell(chatID))
+	actions := []string{"continue", "close"}
+	if req.Status != contract.StatusDone {
+		actions = []string{"retry", "continue", "cancel"}
+	}
+	parts := splitTurnOutput(turnOutputForDelivery(req), 12*1024)
+	inlineOutput := ""
+	partCommand := ""
+	if len(parts) == 1 {
+		inlineOutput = parts[0]
+	} else {
+		partCommand = fmt.Sprintf("larky delivery part --request-id %s --index '<ONE_BASED_PART_INDEX>'", quoteShell(req.ID))
+	}
+	return contract.DeliveryPlan{
+		Type:                  "larky_turn_delivery",
+		RequestID:             req.ID,
+		Status:                req.Status,
+		Project:               req.Project,
+		Platform:              req.Platform,
+		ExpiresAt:             req.ExpiresAt,
+		TargetChatID:          req.ChatID,
+		TargetUserID:          req.TargetUserID,
+		RequiredIdentity:      identity,
+		CardVersion:           "2.0",
+		TurnOutput:            inlineOutput,
+		TurnOutputPartCount:   len(parts),
+		PartCommandTemplate:   partCommand,
+		TurnOutputTruncated:   req.TurnOutputTruncated,
+		RequireContextForm:    true,
+		Actions:               actions,
+		RecordCommandTemplate: record,
+		DegradedCommand:       record + " --degraded",
+		FailureCommand:        fmt.Sprintf("larky delivery fail --request-id %s", quoteShell(req.ID)),
+	}
+}
+
+func turnOutputForDelivery(req *contract.InteractionRequest) string {
+	if strings.TrimSpace(req.TurnOutput) != "" {
+		return req.TurnOutput
+	}
+	return req.Summary
+}
+
+func splitTurnOutput(value string, maxBytes int) []string {
+	if value == "" || maxBytes <= 0 || len(value) <= maxBytes {
+		return []string{value}
+	}
+	parts := make([]string, 0, len(value)/maxBytes+1)
+	for len(value) > maxBytes {
+		cut := maxBytes
+		for cut > 0 && !utf8.ValidString(value[:cut]) {
+			cut--
+		}
+		candidate := value[:cut]
+		minimumBreak := cut / 2
+		if index := strings.LastIndex(candidate[minimumBreak:], "\n\n"); index >= 0 {
+			cut = minimumBreak + index + 2
+		} else if index := strings.LastIndex(candidate[minimumBreak:], "\n"); index >= 0 {
+			cut = minimumBreak + index + 1
+		}
+		parts = append(parts, value[:cut])
+		value = value[cut:]
+	}
+	parts = append(parts, value)
+	return parts
+}
+
+func quoteShell(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func runSidecar(ctx context.Context, args []string, stdout, stderr io.Writer) error {

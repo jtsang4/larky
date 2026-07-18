@@ -44,7 +44,7 @@ func TestCodexSessionStartRecoversOnlyItsOwnQueuedReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.HookSpecificOutput == nil || decision.HookSpecificOutput.HookEventName != "SessionStart" || !strings.Contains(decision.HookSpecificOutput.AdditionalContext, "reply-a") || strings.Contains(decision.HookSpecificOutput.AdditionalContext, "reply-b") {
+	if decision.HookSpecificOutput == nil || decision.HookSpecificOutput.HookEventName != "SessionStart" || !strings.Contains(decision.HookSpecificOutput.AdditionalContext, "reply-a") || !strings.Contains(decision.HookSpecificOutput.AdditionalContext, "飞书回复") || strings.Contains(decision.HookSpecificOutput.AdditionalContext, "reply-b") || strings.Contains(decision.HookSpecificOutput.AdditionalContext, "callback") {
 		t.Fatalf("unexpected SessionStart recovery: %#v", decision)
 	}
 	if err := store.View(func(db *state.Database) error {

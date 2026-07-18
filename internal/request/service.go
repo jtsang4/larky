@@ -17,7 +17,10 @@ import (
 	"github.com/jtsang4/larky/internal/state"
 )
 
-const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+const (
+	alphabet           = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	maxTurnOutputBytes = 128 * 1024
+)
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
@@ -58,8 +61,9 @@ func (s *Service) Create(input CreateInput) (*contract.InteractionRequest, bool,
 	if len(s.cfg.AllowedSenderIDs) == 0 {
 		return nil, false, errors.New("larky allowed sender is not configured")
 	}
-	message := sanitizeSummary(input.Message)
-	idempotency := idempotencyKey(input, message)
+	turnOutput, turnOutputTruncated := sanitizeTurnOutput(input.Message)
+	summary := sanitizeSummary(turnOutput)
+	idempotency := idempotencyKey(input, turnOutput)
 	var result *contract.InteractionRequest
 	created := false
 	err := s.store.Update(func(db *state.Database) error {
@@ -80,28 +84,30 @@ func (s *Service) Create(input CreateInput) (*contract.InteractionRequest, bool,
 			project = "coding task"
 		}
 		request := &contract.InteractionRequest{
-			ID:                id,
-			ShortCode:         id,
-			IdempotencyKey:    idempotency,
-			Platform:          input.Platform,
-			SessionID:         input.SessionID,
-			TurnID:            input.TurnID,
-			PreviousRequestID: strings.ToUpper(input.PreviousRequestID),
-			CWD:               input.CWD,
-			Project:           project,
-			Summary:           message,
-			Status:            Classify(message),
-			State:             contract.StatePendingDelivery,
-			ChatID:            s.cfg.ChatID,
-			TargetUserID:      s.cfg.TargetUserID,
-			AllowedSenderIDs:  append([]string(nil), s.cfg.AllowedSenderIDs...),
-			AwayDetected:      input.AwayDetected,
-			DisplayAsleep:     input.DisplayAsleep,
-			ScreenLocked:      input.ScreenLocked,
-			AwayMethod:        input.AwayMethod,
-			CreatedAt:         now,
-			UpdatedAt:         now,
-			ExpiresAt:         now.Add(s.cfg.RequestTTL),
+			ID:                  id,
+			ShortCode:           id,
+			IdempotencyKey:      idempotency,
+			Platform:            input.Platform,
+			SessionID:           input.SessionID,
+			TurnID:              input.TurnID,
+			PreviousRequestID:   strings.ToUpper(input.PreviousRequestID),
+			CWD:                 input.CWD,
+			Project:             project,
+			Summary:             summary,
+			TurnOutput:          turnOutput,
+			TurnOutputTruncated: turnOutputTruncated,
+			Status:              Classify(turnOutput),
+			State:               contract.StatePendingDelivery,
+			ChatID:              s.cfg.ChatID,
+			TargetUserID:        s.cfg.TargetUserID,
+			AllowedSenderIDs:    append([]string(nil), s.cfg.AllowedSenderIDs...),
+			AwayDetected:        input.AwayDetected,
+			DisplayAsleep:       input.DisplayAsleep,
+			ScreenLocked:        input.ScreenLocked,
+			AwayMethod:          input.AwayMethod,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+			ExpiresAt:           now.Add(s.cfg.RequestTTL),
 		}
 		db.Requests[id] = request
 		db.Idempotency[idempotency] = id
@@ -259,6 +265,20 @@ func (s *Service) GetForSession(requestID string, platform contract.Platform, se
 	return result, err
 }
 
+func (s *Service) Get(requestID string) (*contract.InteractionRequest, error) {
+	if requestID == "" {
+		return nil, errors.New("request_id is required")
+	}
+	var result *contract.InteractionRequest
+	err := s.store.View(func(db *state.Database) error {
+		if req := db.Requests[strings.ToUpper(requestID)]; req != nil {
+			result = cloneRequest(req)
+		}
+		return nil
+	})
+	return result, err
+}
+
 // TakeReplyForHandoff atomically removes the reply for one exact request and
 // records that it was handed back to the originating host session.
 func (s *Service) TakeReplyForHandoff(requestID string, platform contract.Platform, sessionID string, mode contract.HandoffMode) (*contract.RoutedReply, error) {
@@ -300,6 +320,31 @@ func (s *Service) GetHandoffReply(requestID string, platform contract.Platform, 
 			return nil
 		}
 		if reply.RequestID != req.ID || reply.Platform != platform || reply.SessionID != sessionID || req.HandoffEventID != reply.EventID {
+			return fmt.Errorf("archived handoff for request %q does not match its exact session evidence", requestID)
+		}
+		copy := reply
+		result = &copy
+		return nil
+	})
+	return result, err
+}
+
+// GetHandoffReplyByID is used from the already source-bound host continuation.
+// The local request code identifies the archived handoff without copying
+// a full host session ID into the user-visible continuation prompt.
+func (s *Service) GetHandoffReplyByID(requestID string) (*contract.RoutedReply, error) {
+	if requestID == "" {
+		return nil, errors.New("request_id is required")
+	}
+	requestID = strings.ToUpper(requestID)
+	var result *contract.RoutedReply
+	err := s.store.View(func(db *state.Database) error {
+		req := db.Requests[requestID]
+		reply, ok := db.Handoffs[requestID]
+		if req == nil || !ok {
+			return nil
+		}
+		if reply.RequestID != req.ID || reply.Platform != req.Platform || reply.SessionID != req.SessionID || req.HandoffEventID != reply.EventID {
 			return fmt.Errorf("archived handoff for request %q does not match its exact session evidence", requestID)
 		}
 		copy := reply
@@ -504,7 +549,6 @@ func uniqueID(db *state.Database) (string, error) {
 }
 
 func sanitizeSummary(message string) string {
-	message = ansiPattern.ReplaceAllString(message, "")
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return "The coding agent stopped without a final summary."
@@ -515,6 +559,21 @@ func sanitizeSummary(message string) string {
 	}
 	runes := []rune(message)
 	return strings.TrimSpace(string(runes[:limit])) + "…"
+}
+
+func sanitizeTurnOutput(message string) (string, bool) {
+	message = strings.TrimSpace(ansiPattern.ReplaceAllString(message, ""))
+	if message == "" {
+		return "The coding agent stopped without a final response.", false
+	}
+	if len(message) <= maxTurnOutputBytes {
+		return message, false
+	}
+	cut := maxTurnOutputBytes
+	for cut > 0 && !utf8.ValidString(message[:cut]) {
+		cut--
+	}
+	return strings.TrimSpace(message[:cut]) + "\n\n[Larky: the host turn output exceeded 128 KiB and was truncated.]", true
 }
 
 func containsAny(value string, needles ...string) bool {

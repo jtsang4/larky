@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jtsang4/larky/internal/config"
 	"github.com/jtsang4/larky/internal/contract"
@@ -188,5 +189,31 @@ func TestClassifyPrefersAnExplicitLeadingOutcome(t *testing.T) {
 		if got := Classify(test.message); got != test.want {
 			t.Errorf("Classify(%q) = %s, want %s", test.message, got, test.want)
 		}
+	}
+}
+
+func TestCreateKeepsTheCompleteTurnOutputSeparateFromItsSummary(t *testing.T) {
+	cfg := config.Config{ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"}, RequestTTL: time.Hour}
+	service := NewService(state.New(filepath.Join(t.TempDir(), "state.json")), cfg)
+	output := "已完成：\n" + strings.Repeat("这是完整结果、验证证据和代码内容。", 500)
+	req, _, err := service.Create(CreateInput{Platform: contract.PlatformCodex, SessionID: "session", TurnID: "turn", Message: output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.TurnOutput != output || utf8.RuneCountInString(req.Summary) > 1201 || !strings.HasSuffix(req.Summary, "…") || req.TurnOutputTruncated {
+		t.Fatalf("complete turn output was not preserved separately: summary=%d output=%d cut=%v", utf8.RuneCountInString(req.Summary), utf8.RuneCountInString(req.TurnOutput), req.TurnOutputTruncated)
+	}
+}
+
+func TestCreateBoundsVeryLargeTurnOutputAtAValidUTF8Boundary(t *testing.T) {
+	cfg := config.Config{ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"}, RequestTTL: time.Hour}
+	service := NewService(state.New(filepath.Join(t.TempDir(), "state.json")), cfg)
+	output := strings.Repeat("界", maxTurnOutputBytes)
+	req, _, err := service.Create(CreateInput{Platform: contract.PlatformCodex, SessionID: "session", TurnID: "turn", Message: output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !req.TurnOutputTruncated || !utf8.ValidString(req.TurnOutput) || !strings.Contains(req.TurnOutput, "exceeded 128 KiB") || len(req.TurnOutput) > maxTurnOutputBytes+256 {
+		t.Fatalf("large turn output was not safely bounded: bytes=%d valid=%v cut=%v", len(req.TurnOutput), utf8.ValidString(req.TurnOutput), req.TurnOutputTruncated)
 	}
 }

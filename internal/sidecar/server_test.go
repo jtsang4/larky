@@ -3,7 +3,6 @@ package sidecar
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"io"
 	"log"
 	"os"
@@ -70,12 +69,8 @@ func TestSidecarRoutesSyntheticEventToExactClaudeSubscriber(t *testing.T) {
 	}()
 	select {
 	case line := <-lineCh:
-		var notification contract.MonitorNotification
-		if err := json.Unmarshal([]byte(line), &notification); err != nil {
-			t.Fatal(err)
-		}
-		if notification.RequestID != req.ID || notification.Action != "continue" || !strings.Contains(notification.FetchCommand, "larky handoff show") || !strings.Contains(notification.FetchCommand, req.ID) || !strings.Contains(notification.FetchCommand, `$CLAUDE_CODE_SESSION_ID`) {
-			t.Fatalf("unexpected compact notification: %#v", notification)
+		if !strings.Contains(line, "[Larky · 飞书回复 · "+req.ID+"]") || !strings.Contains(line, "用户选择继续当前任务") {
+			t.Fatalf("unexpected compact notification: %s", line)
 		}
 		for _, sensitive := range []string{"claude-session", "/tmp/project", "callback-secret", `\"schema\":\"2.0\"`} {
 			if strings.Contains(line, sensitive) {
@@ -84,9 +79,6 @@ func TestSidecarRoutesSyntheticEventToExactClaudeSubscriber(t *testing.T) {
 		}
 		if len(line) > 700 {
 			t.Fatalf("Monitor notification may be truncated by Claude Code: %d bytes: %s", len(line), line)
-		}
-		if !strings.Contains(notification.Instruction, "cannot see this terminal") {
-			t.Fatalf("notification does not preserve remote result visibility: %#v", notification)
 		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("timed out waiting for routed reply")

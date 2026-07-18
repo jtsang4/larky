@@ -2,7 +2,7 @@
 
 Larky 是一个 **Claude Code / Codex 原生插件**，不是一个需要使用者手工启动的独立应用。
 
-安装后，Coding Agent 的 Stop Hook 会在每轮任务停下时自动检查 Mac 是否已息屏或锁屏。若使用者已经离开，插件会让 Agent 通过全局可用的 `lark-im` Skill 发送飞书 Card 2.0；使用者点击卡片或回复消息后，Larky 会把输入精确送回原始 Agent session。对 Codex App 来说，回复会直接续在侧边栏里的原任务中，不会另起一个不可见的 `codex exec resume` 会话。
+安装后，Coding Agent 的 Stop Hook 会在每轮任务停下时自动检查 Mac 是否已息屏或锁屏。若使用者已经离开，插件会把这一轮的实际答复通过全局可用的 `lark-im` Skill 搬到飞书 Card 2.0，而不是只发一条“任务完成”通知；使用者点击卡片、在卡片表单输入，或引用回复任一结果卡片后，Larky 会把输入精确送回原始 Agent session。对 Codex App 来说，回复会直接续在侧边栏里的原任务中，不会另起一个不可见的 `codex exec resume` 会话。
 
 名称来自 Lark，也与 lucky 同音。
 
@@ -38,7 +38,9 @@ curl -fsSL https://raw.githubusercontent.com/jtsang4/larky/main/install.sh | sh 
 
 当任务停下且 Mac 已息屏或锁屏时，插件自动介入；Mac 仍在使用时不会发送消息。
 
-飞书卡片不是只写“已完成”的状态占位：正文会携带实际结果或自包含的有效摘要。使用者从飞书继续任务后，新一轮的最终答复也会由下一张 Card 2.0 返回，因此不需要回到 Mac 查看终端才能知道 Agent 做了什么。
+飞书卡片不是只写“已完成”的状态占位：Larky 保留 Stop Hook 收到的完整 turn final output，短内容原样放入一张卡片；长内容按安全大小分成多张有序 Card 2.0，并把标题、列表、代码、验证证据和问题一起送达。只有真实秘密、敏感路径和完整 session ID 会被 Agent 按 Skill 约束脱敏；超过 128 KiB 的极端输出会明确标记截断。使用者从飞书继续任务后，新一轮的最终答复也会由下一组 Card 2.0 返回，因此不需要回到 Mac 查看终端才能知道 Agent 做了什么。
+
+每轮最后一张卡片都带文字输入表单；同一轮若拆成多张卡片，所有 `message_id` 都映射到同一个 request。引用回复正文卡片、控制卡片或任一分片，都会回到同一个原会话。
 
 Larky 默认读取 `lark-cli auth status --json` 中的当前登录用户 `open_id`，向该用户发送机器人私聊，并且只接受该用户的回复。因此，正常的单用户场景没有 Larky 首次配置步骤。
 
@@ -92,7 +94,7 @@ flowchart LR
   C -- "否" --> D["正常停止，不通知"]
   C -- "是" --> E["创建带 session 映射的请求"]
   E --> F["Agent 按 Larky Skill 调用 lark-im"]
-  F --> G["发送飞书 Card 2.0"]
+  F --> G["完整输出进入一张或多张 Card 2.0"]
   G --> H["Lark event consumer 收到卡片或消息回复"]
   H --> I["message_id → request_id → agent_session_id"]
   I --> J["Claude Monitor / 原 Codex Stop Hook"]
@@ -100,9 +102,9 @@ flowchart LR
 
 一个飞书机器人私聊可以同时承载多个 Agent session。`chat_id` 只标识消息入口，不能标识应该恢复哪个任务；Larky 使用下面的链路精确寻址：
 
-`reply_to/root_id → outbound_message_id → request_id → platform + agent_session_id`
+`reply_to/root_id → 任一 turn message_id → request_id → platform + agent_session_id`
 
-无法唯一匹配的消息会进入 unrouted inbox，不会猜“最近会话”，也不会广播到多个会话。
+无法唯一匹配的消息会持久化进入 unrouted inbox，不会猜“最近会话”，也不会广播到多个会话。如果消息引用的结果卡片刚刚发出、其别名尚未来得及登记，登记完成后会自动重放这条事件。
 
 ## 前置条件与边界
 
@@ -116,6 +118,8 @@ flowchart LR
 ## Codex App 如何保持原任务
 
 Codex App 没有面向第三方插件开放“按 thread id 向既有任务注入消息”的稳定外部接口。Larky 因此使用 Codex 已公开的 lifecycle Hook 语义：第一次 Stop continuation 让当前 Agent 发卡片；第二次递归 Stop 不结束，而是在**同一个 App 任务的同一个 Hook 调用**里等待。飞书事件经 singleton sidecar 路由到这个 session 后，Hook 返回新的 continuation，Codex 会在原任务内继续模型循环。
+
+[Codex 当前公开 Hook](https://learn.chatgpt.com/docs/hooks.md)没有“给模型但不进入任务记录”的隐藏 continuation 通道，`suppressOutput` 也尚未实现。因此 Larky 只在原任务中保留一行 `[Larky · 飞书传输/回复 · 请求码]` 来源标记和真实用户文字；目标身份、回执命令、callback token、原卡片 JSON 与本地路径都通过 request-bound 本地读取留在后台，不再混进可见对话。
 
 这带来三个可验证的行为：
 
@@ -151,6 +155,8 @@ larky config set --target-user ou_xxx
 - Go 单一可执行文件；支持 macOS arm64 与 amd64 原生构建。
 - CoreGraphics 检测显示器休眠与锁屏；只有 `display_asleep OR screen_locked` 才通知。
 - Card 2.0 是首版默认交互面，包含继续、关闭、重试、取消、选项与文字表单契约。
+- 完整 turn output 传输：单卡原样输出、长内容有序分片、极端内容显式截断。
+- 一轮多消息别名：引用回复任一正文/控制/分片卡片都映射回同一个 request。
 - `card.action.trigger` 与 `im.message.receive_v1` 各只有一个长期 consumer。
 - Stop Hook 会等到两个 consumer 都发出官方 ready marker 后才允许 Agent 发送卡片。
 - Claude Code 使用 Plugin Monitor；Codex App / CLI 使用原任务内的长驻 Stop Hook，并以 SessionStart 作为进程重启后的恢复兜底。
