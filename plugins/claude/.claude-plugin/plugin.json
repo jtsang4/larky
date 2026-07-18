@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "larky",
-  "version": "0.2.0",
-  "description": "Route Lark cards and message replies back to paused Claude Code sessions on an away Mac.",
+  "version": "0.2.1",
+  "description": "Carry complete Claude Code turns to Lark and route replies back to the exact paused session.",
   "author": {
     "name": "James Tsang",
     "url": "https://github.com/jtsang4"
@@ -10,5 +10,5 @@
   "homepage": "https://github.com/jtsang4/larky",
   "repository": "https://github.com/jtsang4/larky",
   "license": "MIT",
-  "keywords": ["lark", "feishu", "claude-code", "notifications", "coding-agent"]
+  "keywords": ["lark", "feishu", "claude-code", "conversation-transport", "coding-agent"]
 }

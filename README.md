@@ -71,7 +71,7 @@ curl -fsSL https://raw.githubusercontent.com/jtsang4/larky/main/install.sh | sh
 larky update
 larky update --all
 larky update --codex
-larky update --version v0.2.0
+larky update --version v0.2.1
 ```
 
 升级后重启 Coding Agent 或新建任务，使新版本的 Skill 和 Hook 生效。Codex 若在 `/hooks` 中把 Larky Hook 标为待审核，需要重新信任 `SessionStart` 与 `Stop`；这是 Codex 绑定 Hook 内容 hash 的安全机制。

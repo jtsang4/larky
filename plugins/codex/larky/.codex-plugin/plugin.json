@@ -1,7 +1,7 @@
 {
   "name": "larky",
-  "version": "0.2.0",
-  "description": "Route Lark cards and message replies back to paused Codex sessions on an away Mac.",
+  "version": "0.2.1",
+  "description": "Carry complete Codex turns to Lark and route replies back to the exact paused task.",
   "author": {
     "name": "James Tsang",
     "url": "https://github.com/jtsang4"
@@ -9,18 +9,18 @@
   "homepage": "https://github.com/jtsang4/larky",
   "repository": "https://github.com/jtsang4/larky",
   "license": "MIT",
-  "keywords": ["lark", "feishu", "codex", "notifications", "coding-agent"],
+  "keywords": ["lark", "feishu", "codex", "conversation-transport", "coding-agent"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Larky",
     "shortDescription": "Continue paused Codex tasks from Lark.",
-    "longDescription": "Notifies you with an interactive Lark card when a Codex task stops while your Mac is away, then routes a verified reply to the exact originating session.",
+    "longDescription": "Carries the complete turn output through interactive Lark cards when a Codex task stops while your Mac is away, then routes a verified reply to the exact originating task.",
     "developerName": "James Tsang",
     "category": "Productivity",
     "capabilities": ["Interactive"],
     "websiteURL": "https://github.com/jtsang4/larky",
     "defaultPrompt": [
-      "Use Larky to report this paused coding task through Lark."
+      "Use Larky to continue this paused coding task through Lark."
     ]
   }
 }

@@ -95,7 +95,7 @@ Usage:
 func runUpdate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("update", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	version := flags.String("version", "", "release version, for example v0.2.0 (defaults to latest)")
+	version := flags.String("version", "", "release version, for example v0.2.1 (defaults to latest)")
 	claude := flags.Bool("claude", false, "install or update the Claude Code plugin")
 	codex := flags.Bool("codex", false, "install or update the Codex plugin")
 	all := flags.Bool("all", false, "install or update both plugins")
@@ -231,7 +231,7 @@ func runDoctor(ctx context.Context, output io.Writer) error {
 	}
 	checks = append(checks,
 		doctorCheck{Name: "current Lark user", OK: resolveErr == nil, Detail: errorText(resolveErr)},
-		doctorCheck{Name: "notification target", OK: cfg.ChatID != "" || cfg.TargetUserID != "", Detail: first(masked(cfg.ChatID), masked(cfg.TargetUserID))},
+		doctorCheck{Name: "Lark transport target", OK: cfg.ChatID != "" || cfg.TargetUserID != "", Detail: first(masked(cfg.ChatID), masked(cfg.TargetUserID))},
 		doctorCheck{Name: "allowed sender", OK: len(cfg.AllowedSenderIDs) > 0, Detail: fmt.Sprintf("%d configured", len(cfg.AllowedSenderIDs))},
 	)
 	away, awayErr := (macos.SystemDetector{}).Detect()
