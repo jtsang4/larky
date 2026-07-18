@@ -23,7 +23,13 @@ curl -fsSL https://raw.githubusercontent.com/jtsang4/larky/main/install.sh | sh 
 curl -fsSL https://raw.githubusercontent.com/jtsang4/larky/main/install.sh | sh -s -- --codex
 ```
 
-然后重启 Coding Agent 或新建一个任务，并按宿主提示审核一次插件 Hook。此后照常使用 Claude Code 或 Codex 即可：
+然后完成宿主原生加载步骤：
+
+1. 重启 Coding Agent，或新建一个任务。
+2. **Codex 必须在任意任务中输入 `/hooks`，分别审核并信任 Larky 的 `SessionStart` 与 `Stop` Hook。**这是 Codex 对非托管命令 Hook 的安全要求；安装插件不会自动授予信任。Hook 定义在升级中发生变化时，Codex 会按新 hash 要求重新审核。
+3. Claude Code 若显示 Hook 审核提示，按宿主提示确认 Larky Hook。
+
+完成后照常使用 Claude Code 或 Codex 即可：
 
 1. 不需要运行 `larky` 命令。
 2. 不需要启动 sidecar。
@@ -64,7 +70,7 @@ larky update --codex
 larky update --version v0.2.0
 ```
 
-升级后重启 Coding Agent 或新建任务，使新版本的 Skill 和 Hook 生效。
+升级后重启 Coding Agent 或新建任务，使新版本的 Skill 和 Hook 生效。Codex 若在 `/hooks` 中把 Larky Hook 标为待审核，需要重新信任 `SessionStart` 与 `Stop`；这是 Codex 绑定 Hook 内容 hash 的安全机制。
 
 ## 如何确认插件已经安装
 
@@ -73,7 +79,7 @@ claude plugin list
 codex plugin list
 ```
 
-两边都应显示 marketplace `larky` 中的 `larky@larky`。`larky doctor` 是可选的诊断命令，不是正常使用步骤。
+两边都应显示 marketplace `larky` 中的 `larky@larky`。`larky doctor` 是可选的诊断命令，不是正常使用步骤；在 Codex 已安装时，它还会通过本地 app-server 只读检查两条 Larky Hook 是否均为 `trusted`，未信任时会明确提示打开 `/hooks`。
 
 ## 工作方式
 

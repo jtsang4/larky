@@ -12,6 +12,7 @@ fake_bin="$test_root/fake-bin"
 install_root="$test_root/install"
 command_dir="$test_root/commands"
 host_log="$test_root/hosts.log"
+installer_log="$test_root/installer.log"
 mkdir -p "$assets" "$update_assets" "$fake_bin" "$command_dir"
 
 cp "$repo_root/dist/larky-darwin-$arch.tar.gz" "$assets/"
@@ -56,7 +57,7 @@ run_installer() {
   LARKY_RELEASE_BASE_URL="file://$selected_assets" \
   LARKY_TEST_HOST_LOG="$host_log" \
   LARKY_TEST_CLAUDE_INSTALLED="$test_root/claude-installed" \
-    /bin/sh "$repo_root/install.sh" --all
+    /bin/sh "$repo_root/install.sh" --all >> "$installer_log"
 }
 
 run_installer "$assets"
@@ -127,5 +128,6 @@ fi
 grep -q 'claude plugin install larky@larky --scope user' "$host_log"
 grep -q 'claude plugin update larky@larky --scope user' "$host_log"
 grep -q 'codex plugin add larky@larky --json' "$host_log"
+grep -q "open /hooks and trust Larky's SessionStart and Stop hooks" "$installer_log"
 
 printf 'installer update test passed: %s -> %s (%s)\n' "$first_version" "$second_version" "$arch"

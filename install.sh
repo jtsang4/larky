@@ -269,3 +269,7 @@ esac
 if [ "$want_claude" -eq 1 ] || [ "$want_codex" -eq 1 ]; then
   say "Restart the coding-agent app or start a new task to load the updated plugin."
 fi
+if [ "$want_codex" -eq 1 ]; then
+  say "Codex security step: after restart, open /hooks and trust Larky's SessionStart and Stop hooks."
+  say "Codex records trust against the exact hook hash, so review them again after an update that changes either hook."
+fi

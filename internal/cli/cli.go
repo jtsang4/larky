@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jtsang4/larky/internal/codexhooks"
 	"github.com/jtsang4/larky/internal/config"
 	"github.com/jtsang4/larky/internal/contract"
 	"github.com/jtsang4/larky/internal/hook"
@@ -44,7 +45,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "config":
 		return runConfig(ctx, args[1:], stdout, stderr)
 	case "doctor":
-		return runDoctor(stdout)
+		return runDoctor(ctx, stdout)
 	case "update":
 		return runUpdate(ctx, args[1:], stdout, stderr)
 	case "hook":
@@ -192,7 +193,7 @@ type doctorCheck struct {
 	Warning bool   `json:"warning,omitempty"`
 }
 
-func runDoctor(output io.Writer) error {
+func runDoctor(ctx context.Context, output io.Writer) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -202,9 +203,24 @@ func runDoctor(output io.Writer) error {
 		cfg = resolved
 	}
 	checks := []doctorCheck{{Name: "macOS", OK: runtime.GOOS == "darwin", Detail: runtime.GOOS}}
+	commandPaths := make(map[string]string, 3)
 	for _, item := range []struct{ name, command string }{{"lark-cli", cfg.LarkCLI}, {"codex", "codex"}, {"claude", "claude"}} {
 		path, findErr := exec.LookPath(item.command)
+		if findErr == nil {
+			commandPaths[item.name] = path
+		}
 		checks = append(checks, doctorCheck{Name: item.name, OK: findErr == nil, Detail: first(path, errorText(findErr))})
+	}
+	if codexPath := commandPaths["codex"]; codexPath != "" {
+		cwd, cwdErr := os.Getwd()
+		doctorCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		report, trustErr := codexhooks.Inspect(doctorCtx, codexPath, cwd)
+		cancel()
+		checks = append(checks, doctorCheck{
+			Name:   "Codex Larky hook trust",
+			OK:     cwdErr == nil && trustErr == nil && report.Ready,
+			Detail: first(errorText(cwdErr), errorText(trustErr), report.Detail()),
+		})
 	}
 	checks = append(checks,
 		doctorCheck{Name: "current Lark user", OK: resolveErr == nil, Detail: errorText(resolveErr)},
