@@ -87,3 +87,63 @@ func TestRecordDeliveryRejectsIdentityThatCannotReachConsumer(t *testing.T) {
 		t.Fatalf("expected identity mismatch error, got %v", err)
 	}
 }
+
+func TestReplyHandoffRequiresTheExactRequestSessionAndEvent(t *testing.T) {
+	cfg := config.Config{ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"}, RequestTTL: time.Hour, EventIdentity: "bot"}
+	store := state.New(filepath.Join(t.TempDir(), "state.json"))
+	service := NewService(store, cfg)
+	req, _, err := service.Create(CreateInput{Platform: contract.PlatformCodex, SessionID: "session-a", TurnID: "turn-a", Message: "Done."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordDelivery(req.ID, "om-a", "oc-chat", "bot", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(func(db *state.Database) error {
+		db.Requests[req.ID].State = contract.StateClaimed
+		db.Requests[req.ID].ClaimedEventID = "evt-a"
+		db.Inbox[state.InboxKey(contract.PlatformCodex, "session-a")] = []*state.InboxItem{{Reply: contract.RoutedReply{
+			RequestID: req.ID, Platform: contract.PlatformCodex, SessionID: "session-a", EventID: "evt-a", Action: "continue",
+		}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wrong, err := service.TakeReplyForHandoff(req.ID, contract.PlatformCodex, "session-b", contract.HandoffCodexStopHook)
+	if err != nil || wrong != nil {
+		t.Fatalf("another session must not claim the reply: %#v err=%v", wrong, err)
+	}
+	reply, err := service.TakeReplyForHandoff(req.ID, contract.PlatformCodex, "session-a", contract.HandoffCodexStopHook)
+	if err != nil || reply == nil || reply.EventID != "evt-a" {
+		t.Fatalf("exact session did not claim the reply: %#v err=%v", reply, err)
+	}
+	stored, err := service.GetForSession(req.ID, contract.PlatformCodex, "session-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.State != contract.StateResumed || stored.HandoffMode != contract.HandoffCodexStopHook || stored.HandoffEventID != "evt-a" || stored.HandoffAt.IsZero() {
+		t.Fatalf("handoff evidence was not recorded: %#v", stored)
+	}
+}
+
+func TestLatestForSessionDoesNotCrossTurns(t *testing.T) {
+	now := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
+	cfg := config.Config{ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"}, RequestTTL: time.Hour}
+	service := NewServiceWithClock(state.New(filepath.Join(t.TempDir(), "state.json")), cfg, func() time.Time {
+		now = now.Add(time.Second)
+		return now
+	})
+	first, _, err := service.Create(CreateInput{Platform: contract.PlatformCodex, SessionID: "session", TurnID: "turn-a", Message: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := service.Create(CreateInput{Platform: contract.PlatformCodex, SessionID: "session", TurnID: "turn-b", Message: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := service.LatestForSession(contract.PlatformCodex, "session", "turn-a")
+	if err != nil || latest == nil || latest.ID != first.ID || latest.ID == second.ID {
+		t.Fatalf("turn lookup crossed sessions: %#v err=%v", latest, err)
+	}
+}

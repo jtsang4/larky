@@ -1,13 +1,26 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/larky\" hook session-start --platform codex",
+            "timeout": 10,
+            "statusMessage": "Checking for a queued Larky reply"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/bin/larky\" hook stop --platform codex",
-            "timeout": 15,
-            "statusMessage": "Checking whether Larky should notify you"
+            "timeout": 86460,
+            "statusMessage": "Waiting in this Codex task for your Lark reply"
           }
         ]
       }

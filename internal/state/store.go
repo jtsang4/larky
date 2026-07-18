@@ -22,10 +22,7 @@ type ProcessedEvent struct {
 }
 
 type InboxItem struct {
-	Reply       contract.RoutedReply `json:"reply"`
-	Attempts    int                  `json:"attempts,omitempty"`
-	NextAttempt time.Time            `json:"next_attempt,omitempty"`
-	LastError   string               `json:"last_error,omitempty"`
+	Reply contract.RoutedReply `json:"reply"`
 }
 
 type Database struct {

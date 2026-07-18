@@ -18,7 +18,7 @@ func Validate(root string) error {
 			return validateManifest(filepath.Join(root, "plugins/claude/.claude-plugin/plugin.json"), "larky")
 		},
 		func() error {
-			return validateHooks(filepath.Join(root, "plugins/codex/larky/hooks/hooks.json"), "--platform codex")
+			return validateCodexHooks(filepath.Join(root, "plugins/codex/larky/hooks/hooks.json"))
 		},
 		func() error {
 			return validateHooks(filepath.Join(root, "plugins/claude/hooks/hooks.json"), "--platform claude")
@@ -32,6 +32,41 @@ func Validate(root string) error {
 	for _, check := range checks {
 		if err := check(); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validateCodexHooks(path string) error {
+	if err := validateHooks(path, "--platform codex"); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	if !strings.Contains(content, `"SessionStart"`) || !strings.Contains(content, `hook session-start --platform codex`) {
+		return errors.New("Codex plugin must recover queued replies in the original task on SessionStart resume")
+	}
+	if strings.Contains(content, "codex exec resume") {
+		return errors.New("Codex plugin must continue through its original Stop hook, not codex exec resume")
+	}
+	var document struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Timeout int `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	for _, group := range document.Hooks["Stop"] {
+		for _, handler := range group.Hooks {
+			if handler.Timeout < 24*60*60 {
+				return errors.New("Codex Stop hook timeout must cover the default 24-hour request lifetime")
+			}
 		}
 	}
 	return nil

@@ -48,6 +48,22 @@ func TestLiveCheckRejectsCallbackStillQueuedForHandoff(t *testing.T) {
 	}
 }
 
+func TestLiveCheckRejectsCodexSessionStartFallbackAsAutomaticResume(t *testing.T) {
+	now := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
+	store := liveStore(t, now.Add(-10*time.Minute), now.Add(-time.Minute))
+	if err := store.Update(func(db *state.Database) error {
+		req := db.Requests["REQ123"]
+		req.Platform = contract.PlatformCodex
+		req.HandoffMode = contract.HandoffCodexSessionStart
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LiveCheck(store, contract.PlatformCodex, now.Add(-2*time.Hour)); err == nil {
+		t.Fatal("SessionStart recovery must not masquerade as an automatic Stop-hook resume")
+	}
+}
+
 func liveStore(t *testing.T, requestCreatedAt, callbackSeenAt time.Time) *state.Store {
 	t.Helper()
 	store := state.New(filepath.Join(t.TempDir(), "state.json"))
@@ -57,10 +73,14 @@ func liveStore(t *testing.T, requestCreatedAt, callbackSeenAt time.Time) *state.
 			Platform:       contract.PlatformClaude,
 			SessionID:      "session-1",
 			MessageID:      "message-1",
+			State:          contract.StateResumed,
 			AwayDetected:   true,
 			ScreenLocked:   true,
 			AwayMethod:     "coregraphics",
 			ClaimedEventID: "event-1",
+			HandoffEventID: "event-1",
+			HandoffMode:    contract.HandoffClaudeMonitor,
+			HandoffAt:      callbackSeenAt,
 			CreatedAt:      requestCreatedAt,
 		}
 		db.Events["event-1"] = state.ProcessedEvent{

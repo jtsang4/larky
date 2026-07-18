@@ -48,7 +48,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "update":
 		return runUpdate(ctx, args[1:], stdout, stderr)
 	case "hook":
-		return runHook(args[1:], stdin, stdout)
+		return runHook(ctx, args[1:], stdin, stdout)
 	case "delivery":
 		return runDelivery(args[1:], stdout, stderr)
 	case "sidecar":
@@ -74,6 +74,7 @@ Usage:
   larky doctor
   larky update [--version <vX.Y.Z>] [--claude|--codex|--all|--binary-only]
   larky hook stop --platform claude|codex
+  larky hook session-start --platform codex
   larky delivery record --request-id <ID> --message-id <om_...> --chat-id <oc_...> --identity bot|user
   larky delivery fail --request-id <ID>
   larky sidecar run|status|stop
@@ -154,7 +155,6 @@ func runConfig(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		flags.Var(&users, "allowed-user", "allowed Lark open_id (repeatable)")
 		ttl := flags.Duration("request-ttl", 0, "request lifetime, for example 24h")
 		larkCLI := flags.String("lark-cli", "", "lark-cli executable path")
-		codexCLI := flags.String("codex-cli", "", "codex executable path")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -175,9 +175,6 @@ func runConfig(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		}
 		if *larkCLI != "" {
 			cfg.LarkCLI = *larkCLI
-		}
-		if *codexCLI != "" {
-			cfg.CodexCLI = *codexCLI
 		}
 		if err := config.Save(cfg); err != nil {
 			return err
@@ -205,7 +202,7 @@ func runDoctor(output io.Writer) error {
 		cfg = resolved
 	}
 	checks := []doctorCheck{{Name: "macOS", OK: runtime.GOOS == "darwin", Detail: runtime.GOOS}}
-	for _, item := range []struct{ name, command string }{{"lark-cli", cfg.LarkCLI}, {"codex", cfg.CodexCLI}, {"claude", "claude"}} {
+	for _, item := range []struct{ name, command string }{{"lark-cli", cfg.LarkCLI}, {"codex", "codex"}, {"claude", "claude"}} {
 		path, findErr := exec.LookPath(item.command)
 		checks = append(checks, doctorCheck{Name: item.name, OK: findErr == nil, Detail: first(path, errorText(findErr))})
 	}
@@ -225,11 +222,12 @@ func runDoctor(output io.Writer) error {
 	return writeJSON(output, map[string]any{"ok": allOK, "checks": checks, "state_dir": cfg.StateDir})
 }
 
-func runHook(args []string, stdin io.Reader, stdout io.Writer) error {
-	if len(args) == 0 || args[0] != "stop" {
-		return errors.New("hook requires stop")
+func runHook(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+	if len(args) == 0 || (args[0] != "stop" && args[0] != "session-start") {
+		return errors.New("hook requires stop or session-start")
 	}
-	flags := flag.NewFlagSet("hook stop", flag.ContinueOnError)
+	hookName := args[0]
+	flags := flag.NewFlagSet("hook "+hookName, flag.ContinueOnError)
 	platformValue := flags.String("platform", "", "claude or codex")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -248,11 +246,19 @@ func runHook(args []string, stdin io.Reader, stdout io.Writer) error {
 		return err
 	}
 	store := state.New(cfg.DatabasePath())
+	service := requestsvc.NewService(store, cfg)
+	if hookName == "session-start" {
+		decision, err := (hook.SessionStartHandler{Requests: service}).Handle(platform, stdin)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, decision)
+	}
 	handler := hook.StopHandler{
-		Config: cfg, Detector: macos.SystemDetector{}, Requests: requestsvc.NewService(store, cfg), Executable: executable,
+		Config: cfg, Detector: macos.SystemDetector{}, Requests: service, Executable: executable,
 		EnsureSidecar: func() error { return sidecar.Ensure(cfg, executable) },
 	}
-	decision, err := handler.Handle(platform, stdin)
+	decision, err := handler.Handle(ctx, platform, stdin)
 	if err != nil {
 		return err
 	}

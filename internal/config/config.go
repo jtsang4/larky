@@ -20,7 +20,6 @@ type Config struct {
 	AllowedSenderIDs []string      `json:"allowed_sender_ids"`
 	RequestTTL       time.Duration `json:"request_ttl"`
 	LarkCLI          string        `json:"lark_cli"`
-	CodexCLI         string        `json:"codex_cli"`
 	EventIdentity    string        `json:"event_identity"`
 	StateDir         string        `json:"-"`
 }
@@ -44,7 +43,6 @@ func Load() (Config, error) {
 	cfg := Config{
 		RequestTTL:    defaultTTL,
 		LarkCLI:       "lark-cli",
-		CodexCLI:      "codex",
 		EventIdentity: "bot",
 		StateDir:      stateDir,
 	}
@@ -63,9 +61,6 @@ func Load() (Config, error) {
 	}
 	if cfg.LarkCLI == "" {
 		cfg.LarkCLI = "lark-cli"
-	}
-	if cfg.CodexCLI == "" {
-		cfg.CodexCLI = "codex"
 	}
 	if cfg.EventIdentity == "" {
 		cfg.EventIdentity = "bot"
@@ -196,9 +191,6 @@ func applyEnv(cfg *Config) {
 	}
 	if value := strings.TrimSpace(os.Getenv("LARKY_LARK_CLI")); value != "" {
 		cfg.LarkCLI = value
-	}
-	if value := strings.TrimSpace(os.Getenv("LARKY_CODEX_CLI")); value != "" {
-		cfg.CodexCLI = value
 	}
 	if value := strings.TrimSpace(os.Getenv("LARKY_EVENT_IDENTITY")); value != "" {
 		cfg.EventIdentity = value

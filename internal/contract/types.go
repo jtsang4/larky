@@ -31,6 +31,7 @@ const (
 	StatePendingDelivery RequestState = "pending_delivery"
 	StatePendingReply    RequestState = "pending_reply"
 	StateClaimed         RequestState = "claimed"
+	StateResumed         RequestState = "resumed"
 	StateClosed          RequestState = "closed"
 	StateCancelled       RequestState = "cancelled"
 	StateExpired         RequestState = "expired"
@@ -41,31 +42,43 @@ func (s RequestState) Active() bool {
 	return s == StatePendingDelivery || s == StatePendingReply
 }
 
+type HandoffMode string
+
+const (
+	HandoffClaudeMonitor     HandoffMode = "claude_monitor"
+	HandoffCodexStopHook     HandoffMode = "codex_stop_hook"
+	HandoffCodexSessionStart HandoffMode = "codex_session_start"
+)
+
 type InteractionRequest struct {
-	ID               string        `json:"id"`
-	ShortCode        string        `json:"short_code"`
-	IdempotencyKey   string        `json:"idempotency_key"`
-	Platform         Platform      `json:"platform"`
-	SessionID        string        `json:"session_id"`
-	TurnID           string        `json:"turn_id,omitempty"`
-	CWD              string        `json:"cwd,omitempty"`
-	Project          string        `json:"project,omitempty"`
-	Summary          string        `json:"summary"`
-	Status           RequestStatus `json:"status"`
-	State            RequestState  `json:"state"`
-	ChatID           string        `json:"chat_id,omitempty"`
-	TargetUserID     string        `json:"target_user_id,omitempty"`
-	AllowedSenderIDs []string      `json:"allowed_sender_ids,omitempty"`
-	MessageID        string        `json:"message_id,omitempty"`
-	DegradedDelivery bool          `json:"degraded_delivery,omitempty"`
-	AwayDetected     bool          `json:"away_detected"`
-	DisplayAsleep    bool          `json:"display_asleep,omitempty"`
-	ScreenLocked     bool          `json:"screen_locked,omitempty"`
-	AwayMethod       string        `json:"away_method,omitempty"`
-	ClaimedEventID   string        `json:"claimed_event_id,omitempty"`
-	CreatedAt        time.Time     `json:"created_at"`
-	UpdatedAt        time.Time     `json:"updated_at"`
-	ExpiresAt        time.Time     `json:"expires_at"`
+	ID                string        `json:"id"`
+	ShortCode         string        `json:"short_code"`
+	IdempotencyKey    string        `json:"idempotency_key"`
+	Platform          Platform      `json:"platform"`
+	SessionID         string        `json:"session_id"`
+	TurnID            string        `json:"turn_id,omitempty"`
+	PreviousRequestID string        `json:"previous_request_id,omitempty"`
+	CWD               string        `json:"cwd,omitempty"`
+	Project           string        `json:"project,omitempty"`
+	Summary           string        `json:"summary"`
+	Status            RequestStatus `json:"status"`
+	State             RequestState  `json:"state"`
+	ChatID            string        `json:"chat_id,omitempty"`
+	TargetUserID      string        `json:"target_user_id,omitempty"`
+	AllowedSenderIDs  []string      `json:"allowed_sender_ids,omitempty"`
+	MessageID         string        `json:"message_id,omitempty"`
+	DegradedDelivery  bool          `json:"degraded_delivery,omitempty"`
+	AwayDetected      bool          `json:"away_detected"`
+	DisplayAsleep     bool          `json:"display_asleep,omitempty"`
+	ScreenLocked      bool          `json:"screen_locked,omitempty"`
+	AwayMethod        string        `json:"away_method,omitempty"`
+	ClaimedEventID    string        `json:"claimed_event_id,omitempty"`
+	HandoffEventID    string        `json:"handoff_event_id,omitempty"`
+	HandoffMode       HandoffMode   `json:"handoff_mode,omitempty"`
+	HandoffAt         time.Time     `json:"handoff_at,omitempty"`
+	CreatedAt         time.Time     `json:"created_at"`
+	UpdatedAt         time.Time     `json:"updated_at"`
+	ExpiresAt         time.Time     `json:"expires_at"`
 }
 
 type Delivery struct {
@@ -131,6 +144,7 @@ type HookInput struct {
 	TranscriptPath       string          `json:"transcript_path,omitempty"`
 	CWD                  string          `json:"cwd,omitempty"`
 	HookEventName        string          `json:"hook_event_name,omitempty"`
+	Source               string          `json:"source,omitempty"`
 	StopHookActive       bool            `json:"stop_hook_active"`
 	LastAssistantMessage json.RawMessage `json:"last_assistant_message,omitempty"`
 }
@@ -139,4 +153,14 @@ type HookDecision struct {
 	Decision      string `json:"decision,omitempty"`
 	Reason        string `json:"reason,omitempty"`
 	SystemMessage string `json:"systemMessage,omitempty"`
+}
+
+type HookSpecificOutput struct {
+	HookEventName     string `json:"hookEventName"`
+	AdditionalContext string `json:"additionalContext,omitempty"`
+}
+
+type SessionStartDecision struct {
+	HookSpecificOutput *HookSpecificOutput `json:"hookSpecificOutput,omitempty"`
+	SystemMessage      string              `json:"systemMessage,omitempty"`
 }

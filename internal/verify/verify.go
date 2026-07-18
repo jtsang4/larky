@@ -51,15 +51,17 @@ type CommandResult struct {
 }
 
 type LiveEvidence struct {
-	Platform        contract.Platform `json:"platform"`
-	RequestID       string            `json:"request_id"`
-	EventID         string            `json:"event_id"`
-	Action          string            `json:"action"`
-	ObservedAt      time.Time         `json:"observed_at"`
-	DisplayAsleep   bool              `json:"display_asleep"`
-	ScreenLocked    bool              `json:"screen_locked"`
-	AwayMethod      string            `json:"away_method"`
-	HandoffAccepted bool              `json:"handoff_accepted"`
+	Platform        contract.Platform    `json:"platform"`
+	RequestID       string               `json:"request_id"`
+	EventID         string               `json:"event_id"`
+	Action          string               `json:"action"`
+	ObservedAt      time.Time            `json:"observed_at"`
+	DisplayAsleep   bool                 `json:"display_asleep"`
+	ScreenLocked    bool                 `json:"screen_locked"`
+	AwayMethod      string               `json:"away_method"`
+	HandoffAccepted bool                 `json:"handoff_accepted"`
+	HandoffMode     contract.HandoffMode `json:"handoff_mode"`
+	HandoffAt       time.Time            `json:"handoff_at"`
 }
 
 type Receipt struct {
@@ -356,6 +358,10 @@ func LiveCheck(store *state.Store, platform contract.Platform, since time.Time) 
 		return LiveEvidence{}, errors.New("invalid live verification platform")
 	}
 	var best *LiveEvidence
+	expectedHandoff := contract.HandoffClaudeMonitor
+	if platform == contract.PlatformCodex {
+		expectedHandoff = contract.HandoffCodexStopHook
+	}
 	err := store.View(func(db *state.Database) error {
 		verification := make(map[string]contract.IncomingEvent)
 		for _, event := range db.Verification {
@@ -363,6 +369,9 @@ func LiveCheck(store *state.Store, platform contract.Platform, since time.Time) 
 		}
 		for _, req := range db.Requests {
 			if req.Platform != platform || !req.AwayDetected || req.AwayMethod != "coregraphics" || req.MessageID == "" || req.DegradedDelivery || req.ClaimedEventID == "" {
+				continue
+			}
+			if req.State != contract.StateResumed || req.HandoffMode != expectedHandoff || req.HandoffEventID != req.ClaimedEventID || req.HandoffAt.Before(since) {
 				continue
 			}
 			processed, ok := db.Events[req.ClaimedEventID]
@@ -379,7 +388,7 @@ func LiveCheck(store *state.Store, platform contract.Platform, since time.Time) 
 			candidate := &LiveEvidence{
 				Platform: platform, RequestID: req.ID, EventID: req.ClaimedEventID, Action: event.Action, ObservedAt: processed.SeenAt,
 				DisplayAsleep: req.DisplayAsleep, ScreenLocked: req.ScreenLocked, AwayMethod: req.AwayMethod,
-				HandoffAccepted: true,
+				HandoffAccepted: true, HandoffMode: req.HandoffMode, HandoffAt: req.HandoffAt,
 			}
 			if best == nil || candidate.ObservedAt.After(best.ObservedAt) {
 				best = candidate
@@ -391,7 +400,7 @@ func LiveCheck(store *state.Store, platform contract.Platform, since time.Time) 
 		return LiveEvidence{}, err
 	}
 	if best == nil {
-		return LiveEvidence{}, fmt.Errorf("no fresh non-synthetic Card 2.0 callback evidence for %s; lock or sleep the Mac, let the real Stop hook send a card, then tap a non-terminal action", platform)
+		return LiveEvidence{}, fmt.Errorf("no fresh non-synthetic Card 2.0 callback and exact-host handoff evidence for %s; lock the Mac, let the real Stop hook send a card, then tap a non-terminal action", platform)
 	}
 	return *best, nil
 }

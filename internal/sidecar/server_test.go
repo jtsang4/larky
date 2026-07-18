@@ -25,7 +25,7 @@ func TestSidecarRoutesSyntheticEventToExactClaudeSubscriber(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
 	cfg := config.Config{
 		StateDir: stateDir, ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"},
-		RequestTTL: time.Hour, LarkCLI: "lark-cli", CodexCLI: "/usr/bin/false", EventIdentity: "bot",
+		RequestTTL: time.Hour, LarkCLI: "lark-cli", EventIdentity: "bot",
 	}
 	store := state.New(cfg.DatabasePath())
 	service := requestsvc.NewService(store, cfg)
@@ -118,7 +118,7 @@ cat >/dev/null
 		t.Fatal(err)
 	}
 	cfg := config.Config{
-		StateDir: stateDir, LarkCLI: fakeLark, CodexCLI: "/usr/bin/false",
+		StateDir: stateDir, LarkCLI: fakeLark,
 		EventIdentity: "bot", RequestTTL: time.Hour,
 	}
 	ctx, cancel := context.WithCancel(context.Background())

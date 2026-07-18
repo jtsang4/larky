@@ -16,6 +16,8 @@ import (
 
 	"github.com/jtsang4/larky/internal/config"
 	"github.com/jtsang4/larky/internal/contract"
+	"github.com/jtsang4/larky/internal/hook"
+	"github.com/jtsang4/larky/internal/platform/macos"
 	requestsvc "github.com/jtsang4/larky/internal/request"
 	"github.com/jtsang4/larky/internal/sidecar"
 	"github.com/jtsang4/larky/internal/state"
@@ -84,36 +86,41 @@ func TestBuiltBinaryIsAtomicallyReplacedWhileSidecarRuns(t *testing.T) {
 	stopped = true
 }
 
-func TestCodexReplyResumesOnlyTheMappedSession(t *testing.T) {
+func TestCodexReplyReturnsThroughOnlyTheMappedStopHook(t *testing.T) {
 	stateDir, err := os.MkdirTemp("/tmp", "larky-integration-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
-	fakeOutput := filepath.Join(stateDir, "codex-args.txt")
-	fakeInput := filepath.Join(stateDir, "codex-stdin.txt")
-	fakeCodex := filepath.Join(stateDir, "fake-codex")
-	script := "#!/bin/sh\ncat > \"$LARKY_FAKE_CODEX_IN\"\nprintf '%s\\n' \"$@\" > \"$LARKY_FAKE_CODEX_OUT\"\n"
-	if err := os.WriteFile(fakeCodex, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("LARKY_FAKE_CODEX_OUT", fakeOutput)
-	t.Setenv("LARKY_FAKE_CODEX_IN", fakeInput)
 	cfg := config.Config{
 		StateDir: stateDir, ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"},
-		RequestTTL: time.Hour, LarkCLI: "unused", CodexCLI: fakeCodex, EventIdentity: "bot",
+		RequestTTL: time.Hour, LarkCLI: "unused", EventIdentity: "bot",
 	}
 	store := state.New(cfg.DatabasePath())
 	service := requestsvc.NewService(store, cfg)
-	req, _, err := service.Create(requestsvc.CreateInput{
-		Platform: contract.PlatformCodex, SessionID: "11111111-2222-3333-4444-555555555555",
-		TurnID: "turn", CWD: stateDir, Message: "Tests passed.",
-	})
-	if err != nil {
-		t.Fatal(err)
+	type sessionFixture struct {
+		sessionID string
+		turnID    string
+		messageID string
+		eventID   string
+		text      string
+		request   *contract.InteractionRequest
 	}
-	if err := service.RecordDelivery(req.ID, "om-codex-card", "oc-chat", "bot", false); err != nil {
-		t.Fatal(err)
+	fixtures := []*sessionFixture{
+		{sessionID: "11111111-2222-3333-4444-555555555555", turnID: "turn-a", messageID: "om-card-a", eventID: "evt-a", text: "only-a"},
+		{sessionID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", turnID: "turn-b", messageID: "om-card-b", eventID: "evt-b", text: "only-b"},
+	}
+	for _, fixture := range fixtures {
+		fixture.request, _, err = service.Create(requestsvc.CreateInput{
+			Platform: contract.PlatformCodex, SessionID: fixture.sessionID, TurnID: fixture.turnID,
+			CWD: stateDir, Message: "Tests passed.", AwayDetected: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := service.RecordDelivery(fixture.request.ID, fixture.messageID, "oc-chat", "bot", false); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -124,45 +131,82 @@ func TestCodexReplyResumesOnlyTheMappedSession(t *testing.T) {
 	}()
 	waitForSidecar(t, cfg)
 
-	raw := []byte(fmt.Sprintf(`{"event_id":"evt-codex","operator_id":"ou-user","message_id":"om-codex-card","chat_id":"oc-chat","action_tag":"button","action_value":"{\"v\":1,\"request_id\":\"%s\",\"action\":\"retry\"}","token":"callback-token","card_content":"{\"schema\":\"2.0\"}"}`, req.ID))
-	requestCtx, requestCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer requestCancel()
-	if _, err := sidecar.Publish(requestCtx, cfg, "card.action.trigger", raw, true); err != nil {
-		t.Fatal(err)
+	type hookResult struct {
+		decision contract.HookDecision
+		err      error
+	}
+	handler := hook.StopHandler{
+		Config: cfg, Detector: integrationDetector{}, Requests: service, EnsureSidecar: func() error { return nil },
+		PollInterval: 5 * time.Millisecond, AwayInterval: time.Hour,
+	}
+	results := []chan hookResult{make(chan hookResult, 1), make(chan hookResult, 1)}
+	for index, fixture := range fixtures {
+		go func(index int, fixture *sessionFixture) {
+			input := fmt.Sprintf(`{"session_id":%q,"turn_id":%q,"stop_hook_active":true}`, fixture.sessionID, fixture.turnID)
+			decision, handleErr := handler.Handle(ctx, contract.PlatformCodex, strings.NewReader(input))
+			results[index] <- hookResult{decision: decision, err: handleErr}
+		}(index, fixture)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		data, readErr := os.ReadFile(fakeOutput)
-		if readErr == nil {
-			args := string(data)
-			if !strings.Contains(args, "exec\nresume\n11111111-2222-3333-4444-555555555555\n-\n--json") {
-				t.Fatalf("wrong Codex resume target: %s", args)
-			}
-			if strings.Contains(args, "callback-token") || strings.Contains(args, req.ID) {
-				t.Fatalf("sensitive routed context leaked into process arguments: %s", args)
-			}
-			input, inputErr := os.ReadFile(fakeInput)
-			if inputErr != nil {
-				t.Fatal(inputErr)
-			}
-			if !strings.Contains(string(input), "request_id="+req.ID) || !strings.Contains(string(input), "callback_token=callback-token") {
-				t.Fatalf("wake prompt lost routed context: %s", input)
-			}
-			cancel()
-			select {
-			case err := <-done:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-time.After(3 * time.Second):
-				t.Fatal("sidecar did not stop")
-			}
-			return
+	publish := func(fixture *sessionFixture) {
+		t.Helper()
+		raw := []byte(fmt.Sprintf(`{"event_id":%q,"operator_id":"ou-user","message_id":%q,"chat_id":"oc-chat","action_tag":"button","action_value":"{\"v\":1,\"request_id\":\"%s\",\"action\":\"retry\"}","input_value":%q,"token":"callback-token","card_content":"{\"schema\":\"2.0\"}"}`, fixture.eventID, fixture.messageID, fixture.request.ID, fixture.text))
+		requestCtx, requestCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer requestCancel()
+		if _, err := sidecar.Publish(requestCtx, cfg, "card.action.trigger", raw, true); err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatal("fake Codex runner was not invoked")
+
+	publish(fixtures[0])
+	select {
+	case result := <-results[0]:
+		if result.err != nil || result.decision.Decision != "block" || !strings.Contains(result.decision.Reason, fixtures[0].text) || strings.Contains(result.decision.Reason, fixtures[1].text) {
+			t.Fatalf("session A received the wrong continuation: %#v err=%v", result.decision, result.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("session A Stop hook did not resume")
+	}
+	select {
+	case result := <-results[1]:
+		t.Fatalf("session B was resumed by session A's event: %#v", result)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	publish(fixtures[1])
+	select {
+	case result := <-results[1]:
+		if result.err != nil || result.decision.Decision != "block" || !strings.Contains(result.decision.Reason, fixtures[1].text) || strings.Contains(result.decision.Reason, fixtures[0].text) {
+			t.Fatalf("session B received the wrong continuation: %#v err=%v", result.decision, result.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("session B Stop hook did not resume")
+	}
+
+	for _, fixture := range fixtures {
+		stored, err := service.GetForSession(fixture.request.ID, contract.PlatformCodex, fixture.sessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.State != contract.StateResumed || stored.HandoffMode != contract.HandoffCodexStopHook || stored.HandoffEventID != fixture.eventID {
+			t.Fatalf("missing exact Stop-hook handoff evidence: %#v", stored)
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("sidecar did not stop")
+	}
+}
+
+type integrationDetector struct{}
+
+func (integrationDetector) Detect() (macos.State, error) {
+	return macos.State{Away: true, Method: "fixture"}, nil
 }
 
 func waitForSidecar(t *testing.T, cfg config.Config) {
