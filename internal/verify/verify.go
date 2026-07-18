@@ -360,11 +360,11 @@ func LiveCheck(store *state.Store, platform contract.Platform, since time.Time) 
 			verification[event.EventID] = event
 		}
 		for _, req := range db.Requests {
-			if req.Platform != platform || req.CreatedAt.Before(since) || !req.AwayDetected || req.AwayMethod != "coregraphics" || req.MessageID == "" || req.DegradedDelivery || req.ClaimedEventID == "" {
+			if req.Platform != platform || !req.AwayDetected || req.AwayMethod != "coregraphics" || req.MessageID == "" || req.DegradedDelivery || req.ClaimedEventID == "" {
 				continue
 			}
 			processed, ok := db.Events[req.ClaimedEventID]
-			if !ok || processed.Synthetic || processed.Source != "lark-live" {
+			if !ok || processed.SeenAt.Before(since) || processed.Synthetic || processed.Source != "lark-live" {
 				continue
 			}
 			event, ok := verification[req.ClaimedEventID]
