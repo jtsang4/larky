@@ -3,6 +3,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -200,6 +201,166 @@ func TestCodexReplyReturnsThroughOnlyTheMappedStopHook(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("sidecar did not stop")
+	}
+}
+
+func TestBuiltCodexHookRoundTripUsesTheOriginalHookProcess(t *testing.T) {
+	if os.Getenv("LARKY_BUILT_HOOK_TEST") != "1" {
+		t.Skip("built-binary Hook round trip runs only in L3 verification")
+	}
+	root := projectRoot(t)
+	binary := filepath.Join(root, "dist", "larky")
+	if _, err := os.Stat(binary); err != nil {
+		t.Fatalf("built larky binary is required: %v", err)
+	}
+	stateDir, err := os.MkdirTemp("/tmp", "larky-built-hook-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
+	fakeBin := filepath.Join(stateDir, "fake-bin")
+	if err := os.Mkdir(fakeBin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codexSentinel := filepath.Join(stateDir, "codex-was-started")
+	fakeCodex := filepath.Join(fakeBin, "codex")
+	if err := os.WriteFile(fakeCodex, []byte("#!/bin/sh\nprintf started > \"$LARKY_CODEX_SENTINEL\"\nexit 91\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	environment := append(os.Environ(),
+		"LARKY_STATE_DIR="+stateDir,
+		"LARKY_CHAT_ID=oc-chat",
+		"LARKY_ALLOWED_USER_IDS=ou-user",
+		"LARKY_EVENT_SOURCE=disabled",
+		"LARKY_TEST_MODE=1",
+		"LARKY_AWAY_OVERRIDE=away",
+		"LARKY_CODEX_SENTINEL="+codexSentinel,
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+	)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, "sidecar", "stop")
+		command.Env = environment
+		_ = command.Run()
+	})
+
+	run := func(input string, args ...string) ([]byte, error) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, args...)
+		command.Env = environment
+		command.Stdin = strings.NewReader(input)
+		return command.CombinedOutput()
+	}
+
+	firstInput := `{"session_id":"built-session","turn_id":"built-turn","cwd":"/tmp/project","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"Built process verification passed."}`
+	output, err := run(firstInput, "hook", "stop", "--platform", "codex")
+	if err != nil {
+		t.Fatalf("first built Hook: %v\n%s", err, output)
+	}
+	var first contract.HookDecision
+	if err := json.Unmarshal(output, &first); err != nil || first.Decision != "block" || !strings.Contains(first.Reason, "Card 2.0") {
+		t.Fatalf("first built Hook output: %#v parse=%v raw=%s", first, err, output)
+	}
+
+	cfg := config.Config{StateDir: stateDir}
+	var requestID string
+	if err := state.New(cfg.DatabasePath()).View(func(db *state.Database) error {
+		for id, req := range db.Requests {
+			if req.Platform == contract.PlatformCodex && req.SessionID == "built-session" {
+				requestID = id
+			}
+		}
+		return nil
+	}); err != nil || requestID == "" {
+		t.Fatalf("built Hook request was not persisted: id=%q err=%v", requestID, err)
+	}
+	output, err = run("", "delivery", "record", "--request-id", requestID, "--message-id", "om-built", "--chat-id", "oc-chat", "--identity", "bot")
+	if err != nil {
+		t.Fatalf("record built delivery: %v\n%s", err, output)
+	}
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer waitCancel()
+	waitCommand := exec.CommandContext(waitCtx, binary, "hook", "stop", "--platform", "codex")
+	waitCommand.Env = environment
+	waitCommand.Stdin = strings.NewReader(`{"session_id":"built-session","turn_id":"built-turn","cwd":"/tmp/project","hook_event_name":"Stop","stop_hook_active":true,"last_assistant_message":"Delivery recorded."}`)
+	var waitOutput bytes.Buffer
+	waitCommand.Stdout = &waitOutput
+	waitCommand.Stderr = &waitOutput
+	if err := waitCommand.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := fmt.Sprintf(`{"event_id":"evt-built","operator_id":"ou-user","message_id":"om-built","chat_id":"oc-chat","action_tag":"button","action_value":"{\"v\":1,\"request_id\":\"%s\",\"action\":\"retry\"}","input_value":"fix the built test","token":"callback-token","card_content":"{\"schema\":\"2.0\"}"}`, requestID)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		output, err = run(raw, "debug", "ingest", "--event-key", "card.action.trigger")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("publish built callback: %v\n%s", err, output)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := waitCommand.Wait(); err != nil {
+		t.Fatalf("waiting built Hook: %v\n%s", err, waitOutput.String())
+	}
+	var resumed contract.HookDecision
+	if err := json.Unmarshal(waitOutput.Bytes(), &resumed); err != nil || resumed.Decision != "block" || !strings.Contains(resumed.Reason, "this exact Codex task") || !strings.Contains(resumed.Reason, "fix the built test") {
+		t.Fatalf("built Hook did not return the routed continuation: %#v parse=%v raw=%s", resumed, err, waitOutput.String())
+	}
+	if _, err := os.Stat(codexSentinel); !os.IsNotExist(err) {
+		t.Fatalf("Larky started a second codex process; sentinel stat=%v", err)
+	}
+	stored, err := requestsvc.NewService(state.New(cfg.DatabasePath()), cfg).GetForSession(requestID, contract.PlatformCodex, "built-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.State != contract.StateResumed || stored.HandoffMode != contract.HandoffCodexStopHook || stored.HandoffEventID != "evt-built" {
+		t.Fatalf("built round trip lacks original-Hook evidence: %#v", stored)
+	}
+
+	recoveryInput := `{"session_id":"recovery-session","turn_id":"recovery-turn","cwd":"/tmp/project","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"Recovery fixture."}`
+	output, err = run(recoveryInput, "hook", "stop", "--platform", "codex")
+	if err != nil {
+		t.Fatalf("create recovery request: %v\n%s", err, output)
+	}
+	var recoveryRequestID string
+	if err := state.New(cfg.DatabasePath()).View(func(db *state.Database) error {
+		for id, req := range db.Requests {
+			if req.Platform == contract.PlatformCodex && req.SessionID == "recovery-session" {
+				recoveryRequestID = id
+			}
+		}
+		return nil
+	}); err != nil || recoveryRequestID == "" {
+		t.Fatalf("recovery request was not persisted: id=%q err=%v", recoveryRequestID, err)
+	}
+	if output, err = run("", "delivery", "record", "--request-id", recoveryRequestID, "--message-id", "om-recovery", "--chat-id", "oc-chat", "--identity", "bot"); err != nil {
+		t.Fatalf("record recovery delivery: %v\n%s", err, output)
+	}
+	recoveryEvent := fmt.Sprintf(`{"event_id":"evt-recovery","operator_id":"ou-user","message_id":"om-recovery","chat_id":"oc-chat","action_tag":"button","action_value":"{\"v\":1,\"request_id\":\"%s\",\"action\":\"continue\"}","input_value":"recover in original task"}`, recoveryRequestID)
+	if output, err = run(recoveryEvent, "debug", "ingest", "--event-key", "card.action.trigger"); err != nil {
+		t.Fatalf("publish recovery callback: %v\n%s", err, output)
+	}
+	output, err = run(`{"session_id":"recovery-session","cwd":"/tmp/project","hook_event_name":"SessionStart","source":"resume"}`, "hook", "session-start", "--platform", "codex")
+	if err != nil {
+		t.Fatalf("run SessionStart recovery: %v\n%s", err, output)
+	}
+	var recovered contract.SessionStartDecision
+	if err := json.Unmarshal(output, &recovered); err != nil || recovered.HookSpecificOutput == nil || recovered.HookSpecificOutput.HookEventName != "SessionStart" || !strings.Contains(recovered.HookSpecificOutput.AdditionalContext, "recover in original task") {
+		t.Fatalf("SessionStart did not recover the exact inbox: %#v parse=%v raw=%s", recovered, err, output)
+	}
+	recoveryStored, err := requestsvc.NewService(state.New(cfg.DatabasePath()), cfg).GetForSession(recoveryRequestID, contract.PlatformCodex, "recovery-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recoveryStored.HandoffMode != contract.HandoffCodexSessionStart || recoveryStored.HandoffEventID != "evt-recovery" {
+		t.Fatalf("SessionStart recovery evidence is incomplete: %#v", recoveryStored)
 	}
 }
 
