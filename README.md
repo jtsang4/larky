@@ -38,6 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/jtsang4/larky/main/install.sh | sh 
 
 当任务停下且 Mac 已息屏或锁屏时，插件自动介入；Mac 仍在使用时不会发送消息。
 
+飞书卡片不是只写“已完成”的状态占位：正文会携带实际结果或自包含的有效摘要。使用者从飞书继续任务后，新一轮的最终答复也会由下一张 Card 2.0 返回，因此不需要回到 Mac 查看终端才能知道 Agent 做了什么。
+
 Larky 默认读取 `lark-cli auth status --json` 中的当前登录用户 `open_id`，向该用户发送机器人私聊，并且只接受该用户的回复。因此，正常的单用户场景没有 Larky 首次配置步骤。
 
 ## 为什么采用插件，而不是单独的 CLI 或 MCP
