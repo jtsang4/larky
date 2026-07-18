@@ -133,9 +133,11 @@ type RoutedReply struct {
 }
 
 type MonitorNotification struct {
-	Type        string      `json:"type"`
-	Instruction string      `json:"instruction"`
-	Reply       RoutedReply `json:"reply"`
+	Type         string `json:"type"`
+	FetchCommand string `json:"fetch_command"`
+	RequestID    string `json:"request_id"`
+	Action       string `json:"action"`
+	Instruction  string `json:"instruction"`
 }
 
 type HookInput struct {

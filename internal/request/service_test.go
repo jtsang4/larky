@@ -28,6 +28,9 @@ func TestCreateIsIdempotentAndDeliveryBuildsMapping(t *testing.T) {
 	if err := service.RecordDelivery(first.ID, "om-card", "oc-chat", "bot", false); err != nil {
 		t.Fatal(err)
 	}
+	if err := service.RecordDelivery(first.ID, "om-card", "oc-chat", "bot", false); err != nil {
+		t.Fatalf("identical delivery receipt should be idempotent: %v", err)
+	}
 	if err := store.View(func(db *state.Database) error {
 		if db.Requests[first.ID].State != contract.StatePendingReply || db.Deliveries["om-card"].RequestID != first.ID {
 			t.Fatalf("delivery mapping was not persisted: %#v", db)
@@ -104,6 +107,7 @@ func TestReplyHandoffRequiresTheExactRequestSessionAndEvent(t *testing.T) {
 		db.Requests[req.ID].ClaimedEventID = "evt-a"
 		db.Inbox[state.InboxKey(contract.PlatformCodex, "session-a")] = []*state.InboxItem{{Reply: contract.RoutedReply{
 			RequestID: req.ID, Platform: contract.PlatformCodex, SessionID: "session-a", EventID: "evt-a", Action: "continue",
+			CallbackToken: "callback-secret", CardContent: `{"schema":"2.0","body":{"elements":[]}}`,
 		}}}
 		return nil
 	}); err != nil {
@@ -125,6 +129,23 @@ func TestReplyHandoffRequiresTheExactRequestSessionAndEvent(t *testing.T) {
 	if stored.State != contract.StateResumed || stored.HandoffMode != contract.HandoffCodexStopHook || stored.HandoffEventID != "evt-a" || stored.HandoffAt.IsZero() {
 		t.Fatalf("handoff evidence was not recorded: %#v", stored)
 	}
+	if wrong, err := service.GetHandoffReply(req.ID, contract.PlatformCodex, "session-b"); err != nil || wrong != nil {
+		t.Fatalf("another session must not fetch the archived reply: %#v err=%v", wrong, err)
+	}
+	if wrong, err := service.GetHandoffReply(req.ID, contract.PlatformClaude, "session-a"); err != nil || wrong != nil {
+		t.Fatalf("another platform must not fetch the archived reply: %#v err=%v", wrong, err)
+	}
+	archived, err := service.GetHandoffReply(req.ID, contract.PlatformCodex, "session-a")
+	if err != nil || archived == nil || archived.CallbackToken != "callback-secret" || !strings.Contains(archived.CardContent, `"schema":"2.0"`) {
+		t.Fatalf("complete exact-session handoff was not archived: %#v err=%v", archived, err)
+	}
+	if err := service.RecordDelivery(req.ID, "om-content", "oc-chat", "bot", false); err == nil || !strings.Contains(err.Error(), "state resumed") {
+		t.Fatalf("a result message reopened a resumed request: %v", err)
+	}
+	stored, err = service.GetForSession(req.ID, contract.PlatformCodex, "session-a")
+	if err != nil || stored.State != contract.StateResumed || stored.MessageID != "om-a" {
+		t.Fatalf("rejected result delivery changed the resumed request: %#v err=%v", stored, err)
+	}
 }
 
 func TestLatestForSessionDoesNotCrossTurns(t *testing.T) {
@@ -145,5 +166,23 @@ func TestLatestForSessionDoesNotCrossTurns(t *testing.T) {
 	latest, err := service.LatestForSession(contract.PlatformCodex, "session", "turn-a")
 	if err != nil || latest == nil || latest.ID != first.ID || latest.ID == second.ID {
 		t.Fatalf("turn lookup crossed sessions: %#v err=%v", latest, err)
+	}
+}
+
+func TestClassifyPrefersAnExplicitLeadingOutcome(t *testing.T) {
+	tests := []struct {
+		message string
+		want    contract.RequestStatus
+	}{
+		{"Done, as instructed.\nThe first send failed, then I fixed it and resent successfully.", contract.StatusDone},
+		{"已完成：第一次发送失败，修复后重发成功。", contract.StatusDone},
+		{"Failed: the live callback still errors.", contract.StatusFailed},
+		{"Blocked: waiting for a local permission decision.", contract.StatusBlocked},
+		{"Please choose which option to use?", contract.StatusWaitingUser},
+	}
+	for _, test := range tests {
+		if got := Classify(test.message); got != test.want {
+			t.Errorf("Classify(%q) = %s, want %s", test.message, got, test.want)
+		}
 	}
 }

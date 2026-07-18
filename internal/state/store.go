@@ -32,6 +32,7 @@ type Database struct {
 	Idempotency  map[string]string                       `json:"idempotency"`
 	Events       map[string]ProcessedEvent               `json:"events"`
 	Inbox        map[string][]*InboxItem                 `json:"inbox"`
+	Handoffs     map[string]contract.RoutedReply         `json:"handoffs,omitempty"`
 	Unrouted     []contract.IncomingEvent                `json:"unrouted,omitempty"`
 	Verification []contract.IncomingEvent                `json:"verification_events,omitempty"`
 }
@@ -150,6 +151,7 @@ func newDatabase() *Database {
 		Idempotency:  make(map[string]string),
 		Events:       make(map[string]ProcessedEvent),
 		Inbox:        make(map[string][]*InboxItem),
+		Handoffs:     make(map[string]contract.RoutedReply),
 		Unrouted:     make([]contract.IncomingEvent, 0),
 		Verification: make([]contract.IncomingEvent, 0),
 	}
@@ -173,6 +175,9 @@ func normalize(db *Database) {
 	}
 	if db.Inbox == nil {
 		db.Inbox = make(map[string][]*InboxItem)
+	}
+	if db.Handoffs == nil {
+		db.Handoffs = make(map[string]contract.RoutedReply)
 	}
 }
 

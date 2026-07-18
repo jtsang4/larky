@@ -135,7 +135,7 @@ func validateSkill(path string) error {
 	if !strings.HasPrefix(content, "---\nname: larky\ndescription:") {
 		return fmt.Errorf("%s: invalid skill frontmatter", path)
 	}
-	if strings.Contains(content, "TODO") || !strings.Contains(content, "lark-im") || !strings.Contains(content, "Card 2.0") {
+	if strings.Contains(content, "TODO") || !strings.Contains(content, "lark-im") || !strings.Contains(content, "Card 2.0") || !strings.Contains(content, "larky handoff show") || !strings.Contains(content, "remote user cannot see") {
 		return fmt.Errorf("%s: skill contract is incomplete", path)
 	}
 	return nil

@@ -130,6 +130,16 @@ func (s *Service) RecordDelivery(requestID, messageID, chatID, senderIdentity st
 		if req == nil {
 			return fmt.Errorf("request %q not found", requestID)
 		}
+		if req.State == contract.StatePendingReply {
+			existing, ok := db.Deliveries[messageID]
+			if ok && req.MessageID == messageID && existing.RequestID == req.ID && existing.ChatID == chatID && existing.SenderIdentity == senderIdentity && existing.Degraded == degraded {
+				return nil
+			}
+			return fmt.Errorf("request %q already has a different recorded delivery", req.ID)
+		}
+		if req.State != contract.StatePendingDelivery {
+			return fmt.Errorf("request %q cannot record a delivery while in state %s", req.ID, req.State)
+		}
 		if req.ChatID != "" && req.ChatID != chatID {
 			return errors.New("delivery chat does not match request chat")
 		}
@@ -251,6 +261,31 @@ func (s *Service) AcknowledgeReplyHandoff(reply contract.RoutedReply, mode contr
 	return nil
 }
 
+// GetHandoffReply returns the complete reply that was already handed to one
+// exact host session. Monitor notifications deliberately omit large and
+// sensitive fields, so the host fetches them from this source-bound archive.
+func (s *Service) GetHandoffReply(requestID string, platform contract.Platform, sessionID string) (*contract.RoutedReply, error) {
+	if requestID == "" || !platform.Valid() || sessionID == "" {
+		return nil, errors.New("request_id, valid platform, and session_id are required")
+	}
+	requestID = strings.ToUpper(requestID)
+	var result *contract.RoutedReply
+	err := s.store.View(func(db *state.Database) error {
+		req := db.Requests[requestID]
+		reply, ok := db.Handoffs[requestID]
+		if req == nil || !ok || req.Platform != platform || req.SessionID != sessionID {
+			return nil
+		}
+		if reply.RequestID != req.ID || reply.Platform != platform || reply.SessionID != sessionID || req.HandoffEventID != reply.EventID {
+			return fmt.Errorf("archived handoff for request %q does not match its exact session evidence", requestID)
+		}
+		copy := reply
+		result = &copy
+		return nil
+	})
+	return result, err
+}
+
 func (s *Service) takeReply(requestID, eventID string, platform contract.Platform, sessionID string, mode contract.HandoffMode) (*contract.RoutedReply, error) {
 	if !platform.Valid() || sessionID == "" || mode == "" {
 		return nil, errors.New("valid platform, session_id, and handoff mode are required")
@@ -284,6 +319,7 @@ func (s *Service) takeReply(requestID, eventID string, platform contract.Platfor
 			req.HandoffMode = mode
 			req.HandoffAt = now
 			req.UpdatedAt = now
+			db.Handoffs[req.ID] = reply
 			db.Inbox[key] = append(items[:index], items[index+1:]...)
 			if len(db.Inbox[key]) == 0 {
 				delete(db.Inbox, key)
@@ -372,6 +408,15 @@ func cloneRequest(req *contract.InteractionRequest) *contract.InteractionRequest
 
 func Classify(message string) contract.RequestStatus {
 	lower := strings.ToLower(message)
+	leading := strings.TrimLeft(strings.TrimSpace(strings.SplitN(lower, "\n", 2)[0]), "#*-_` ")
+	switch {
+	case startsWithAny(leading, "done", "success", "succeeded", "fixed", "已完成", "完成", "成功", "已修复"):
+		return contract.StatusDone
+	case startsWithAny(leading, "failed", "failure", "error", "失败", "报错"):
+		return contract.StatusFailed
+	case startsWithAny(leading, "blocked", "blocker", "阻塞", "卡住"):
+		return contract.StatusBlocked
+	}
 	switch {
 	case containsAny(lower, "failed", "failure", "error", "失败", "报错"):
 		return contract.StatusFailed
@@ -425,6 +470,15 @@ func sanitizeSummary(message string) string {
 func containsAny(value string, needles ...string) bool {
 	for _, needle := range needles {
 		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func startsWithAny(value string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
 			return true
 		}
 	}

@@ -236,6 +236,7 @@ Identity contract:
 Notification contract:
 - request_id: %s; status: %s; project: %s; platform: %s; expires_at: %s.
 - Summarize the just-finished task and its real verification evidence. Redact secrets, full session IDs, and sensitive paths.
+- The recipient is away and cannot see the agent terminal or host UI. This card is the user-visible answer: include the concrete result itself, or a useful self-contained bounded rendition, not only “done”, “generated”, or “see terminal”.
 - Header: status + project + platform. Body: concise result, evidence or blocker, and exactly one next question when input is needed. Footer: request code %s and expiry, plus “you can also reply to this card”.
 - This first delivery must be Card 2.0. If card sending fails twice, send a plain-text fallback containing request code %s and mark the delivery as degraded.
 - For standalone buttons, use callback value {"v":1,"request_id":"%s","action":"<action>"}. For done, include continue and close. For waiting_user, blocked, or failed, include an input form named context with a submit button named submit_context, plus retry/continue when appropriate and cancel. If the answer has 2–3 clear choices, buttons may use action answer and choice_id.
@@ -276,7 +277,7 @@ func routedReplyPrompt(reply contract.RoutedReply, routeDescription string) stri
 		builder.WriteString("First use the globally installed lark-im skill with the callback token and original card content below to update the complete card to an acknowledged/queued state and disable its actions. Use the delayed-update token at most once.\n")
 		fmt.Fprintf(&builder, "callback_token=%s\n<original-card-content>\n%s\n</original-card-content>\n", reply.CallbackToken, truncatePromptValue(reply.CardContent, 6000))
 	}
-	builder.WriteString("Then apply the requested continue/retry/answer/context action in this same task. When the turn ends, report concrete results and verification; Larky's Stop Hook will decide whether another notification is needed.")
+	builder.WriteString("Then apply the requested continue/retry/answer/context action in this same task. The remote user cannot see the host UI, so make the final assistant response self-contained and include the concrete requested result, not merely a completion notice. Larky's Stop Hook will relay that result and its verification in the next card.")
 	return builder.String()
 }
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func TestSidecarRoutesSyntheticEventToExactClaudeSubscriber(t *testing.T) {
 		subscribeDone <- Subscribe(ctx, cfg, contract.PlatformClaude, "claude-session", writer)
 	}()
 
-	raw := []byte(`{"event_id":"evt-card","operator_id":"ou-user","message_id":"om-card","chat_id":"oc-chat","action_tag":"button","action_value":"{\"v\":1,\"request_id\":\"` + req.ID + `\",\"action\":\"continue\"}"}`)
+	raw := []byte(`{"event_id":"evt-card","operator_id":"ou-user","message_id":"om-card","chat_id":"oc-chat","action_tag":"button","action_value":"{\"v\":1,\"request_id\":\"` + req.ID + `\",\"action\":\"continue\"}","token":"callback-secret","card_content":"{\"schema\":\"2.0\",\"body\":{\"elements\":[]}}"}`)
 	publishCtx, publishCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer publishCancel()
 	if _, err := Publish(publishCtx, cfg, "card.action.trigger", raw, true); err != nil {
@@ -73,12 +74,40 @@ func TestSidecarRoutesSyntheticEventToExactClaudeSubscriber(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &notification); err != nil {
 			t.Fatal(err)
 		}
-		reply := notification.Reply
-		if reply.SessionID != "claude-session" || reply.Action != "continue" || reply.RequestID != req.ID {
-			t.Fatalf("unexpected routed reply: %#v", reply)
+		if notification.RequestID != req.ID || notification.Action != "continue" || !strings.Contains(notification.FetchCommand, "larky handoff show") || !strings.Contains(notification.FetchCommand, req.ID) || !strings.Contains(notification.FetchCommand, `$CLAUDE_CODE_SESSION_ID`) {
+			t.Fatalf("unexpected compact notification: %#v", notification)
+		}
+		for _, sensitive := range []string{"claude-session", "/tmp/project", "callback-secret", `\"schema\":\"2.0\"`} {
+			if strings.Contains(line, sensitive) {
+				t.Fatalf("compact Monitor notification leaked %q: %s", sensitive, line)
+			}
+		}
+		if len(line) > 700 {
+			t.Fatalf("Monitor notification may be truncated by Claude Code: %d bytes: %s", len(line), line)
+		}
+		if !strings.Contains(notification.Instruction, "cannot see this terminal") {
+			t.Fatalf("notification does not preserve remote result visibility: %#v", notification)
 		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("timed out waiting for routed reply")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		archived, err := service.GetHandoffReply(req.ID, contract.PlatformClaude, "claude-session")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if archived != nil {
+			if archived.CallbackToken != "callback-secret" || !strings.Contains(archived.CardContent, `"schema":"2.0"`) {
+				t.Fatalf("complete callback was not preserved behind the fetch command: %#v", archived)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for complete handoff archive")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	cancel()

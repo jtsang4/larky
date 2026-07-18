@@ -52,6 +52,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return runHook(ctx, args[1:], stdin, stdout)
 	case "delivery":
 		return runDelivery(args[1:], stdout, stderr)
+	case "handoff":
+		return runHandoff(ctx, args[1:], stdout, stderr)
 	case "sidecar":
 		return runSidecar(ctx, args[1:], stdout, stderr)
 	case "subscribe":
@@ -78,6 +80,7 @@ Usage:
   larky hook session-start --platform codex
   larky delivery record --request-id <ID> --message-id <om_...> --chat-id <oc_...> --identity bot|user
   larky delivery fail --request-id <ID>
+  larky handoff show --request-id <ID> --platform claude|codex --session-id <ID>
   larky sidecar run|status|stop
   larky subscribe --platform claude --session-id <UUID>
   larky debug ingest --event-key <key> < event.json
@@ -326,6 +329,57 @@ func runDelivery(args []string, stdout, stderr io.Writer) error {
 		return writeJSON(stdout, map[string]any{"ok": true, "request_id": strings.ToUpper(*requestID)})
 	default:
 		return fmt.Errorf("unknown delivery command %q", args[0])
+	}
+}
+
+func runHandoff(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] != "show" {
+		return errors.New("handoff requires show")
+	}
+	flags := flag.NewFlagSet("handoff show", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	requestID := flags.String("request-id", "", "larky request id")
+	platformValue := flags.String("platform", "", "claude or codex")
+	sessionID := flags.String("session-id", "", "exact agent session id")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("handoff show does not accept positional arguments")
+	}
+	if *sessionID == "" {
+		*sessionID = os.Getenv("CLAUDE_CODE_SESSION_ID")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	platform := contract.Platform(*platformValue)
+	service := requestsvc.NewService(state.New(cfg.DatabasePath()), cfg)
+	request, err := service.GetForSession(*requestID, platform, *sessionID)
+	if err != nil {
+		return err
+	}
+	if request == nil {
+		return errors.New("no request exists for that exact request, platform, and session")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reply, err := service.GetHandoffReply(*requestID, platform, *sessionID)
+		if err != nil {
+			return err
+		}
+		if reply != nil {
+			return writeJSON(stdout, reply)
+		}
+		if time.Now().After(deadline) {
+			return errors.New("no handed-off reply exists for that exact request, platform, and session")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
 	}
 }
 

@@ -36,7 +36,7 @@ func TestStopAwayCreatesCardContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Decision != "block" || !strings.Contains(decision.Reason, "Card 2.0") || !strings.Contains(decision.Reason, "delivery record") || !started {
+	if decision.Decision != "block" || !strings.Contains(decision.Reason, "Card 2.0") || !strings.Contains(decision.Reason, "delivery record") || !strings.Contains(decision.Reason, "cannot see the agent terminal") || !strings.Contains(decision.Reason, "concrete result itself") || !started {
 		t.Fatalf("unexpected decision: %#v started=%v", decision, started)
 	}
 }
@@ -102,7 +102,7 @@ func TestCodexRecursiveStopReturnsReplyToTheSameHookSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Decision != "block" || !strings.Contains(decision.Reason, "this exact Codex task") || !strings.Contains(decision.Reason, "先修复测试") {
+	if decision.Decision != "block" || !strings.Contains(decision.Reason, "this exact Codex task") || !strings.Contains(decision.Reason, "先修复测试") || !strings.Contains(decision.Reason, "remote user cannot see the host UI") || !strings.Contains(decision.Reason, "concrete requested result") {
 		t.Fatalf("unexpected same-task continuation: %#v", decision)
 	}
 	stored, err := service.GetForSession(req.ID, contract.PlatformCodex, "session-a")
