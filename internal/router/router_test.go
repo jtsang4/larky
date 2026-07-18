@@ -52,6 +52,17 @@ func TestAmbiguousMessageIsNotGuessed(t *testing.T) {
 	if err != ErrUnrouted {
 		t.Fatalf("expected unrouted, got %v", err)
 	}
+	if err := store.View(func(db *state.Database) error {
+		if len(db.Unrouted) != 1 || db.Unrouted[0].EventID != "evt" {
+			t.Fatalf("unrouted evidence was not persisted: %#v", db.Unrouted)
+		}
+		if _, ok := db.Events["evt"]; !ok {
+			t.Fatal("unrouted event was not deduplicated")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRoutesReplyToMessage(t *testing.T) {
@@ -68,6 +79,69 @@ func TestRoutesReplyToMessage(t *testing.T) {
 	}
 	if result.Reply == nil || result.Reply.Action != "submit_context" || result.Reply.Text == "" {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestRoutesReplyToAnyMessageAlias(t *testing.T) {
+	now := time.Now().UTC()
+	store := state.New(filepath.Join(t.TempDir(), "state.json"))
+	seedRequest(t, store, now)
+	if err := store.Update(func(db *state.Database) error {
+		db.Deliveries["om-content"] = contract.Delivery{RequestID: "L7K2AA", MessageID: "om-content", ChatID: "chat-1", CreatedAt: now}
+		db.Requests["L7K2AA"].MessageIDs = []string{"om-1", "om-content"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewWithClock(store, func() time.Time { return now }).Handle(contract.IncomingEvent{
+		EventID: "evt-content-reply", Kind: contract.IncomingMessage, ChatID: "chat-1", SenderID: "user-1",
+		ReplyTo: "om-content", Text: "这是历史上的诗，还是你写的？",
+	})
+	if err != nil || result.Reply == nil || result.Reply.RequestID != "L7K2AA" || result.Reply.Text == "" {
+		t.Fatalf("content-card reply did not route through its alias: %#v err=%v", result, err)
+	}
+}
+
+func TestReplaysReplyThatArrivedBeforeAliasRegistration(t *testing.T) {
+	now := time.Now().UTC()
+	store := state.New(filepath.Join(t.TempDir(), "state.json"))
+	seedRequest(t, store, now)
+	if err := store.Update(func(db *state.Database) error {
+		db.Requests["OTHER1"] = &contract.InteractionRequest{
+			ID: "OTHER1", ShortCode: "OTHER1", Platform: contract.PlatformCodex, SessionID: "session-2",
+			ChatID: "chat-1", AllowedSenderIDs: []string{"user-1"}, State: contract.StatePendingReply,
+			CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour), MessageID: "om-other",
+		}
+		db.Deliveries["om-other"] = contract.Delivery{RequestID: "OTHER1", MessageID: "om-other", ChatID: "chat-1", CreatedAt: now}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := NewWithClock(store, func() time.Time { return now })
+	event := contract.IncomingEvent{
+		EventID: "evt-race", Kind: contract.IncomingMessage, ChatID: "chat-1", SenderID: "user-1",
+		ReplyTo: "om-late-content", Text: "解释这段结果",
+	}
+	if _, err := r.Handle(event); err != ErrUnrouted {
+		t.Fatalf("expected the early reply to wait unrouted, got %v", err)
+	}
+	if err := store.Update(func(db *state.Database) error {
+		db.Deliveries["om-late-content"] = contract.Delivery{RequestID: "L7K2AA", MessageID: "om-late-content", ChatID: "chat-1", CreatedAt: now}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := r.ReplayUnroutedForMessages([]string{"om-late-content"})
+	if err != nil || replayed != 1 {
+		t.Fatalf("late alias did not replay its reply: replayed=%d err=%v", replayed, err)
+	}
+	if err := store.View(func(db *state.Database) error {
+		if len(db.Unrouted) != 0 || len(db.Inbox[state.InboxKey(contract.PlatformClaude, "session-1")]) != 1 {
+			t.Fatalf("replayed event was not queued exactly once: unrouted=%#v inbox=%#v", db.Unrouted, db.Inbox)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

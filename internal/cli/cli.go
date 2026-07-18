@@ -20,6 +20,7 @@ import (
 	"github.com/jtsang4/larky/internal/hook"
 	"github.com/jtsang4/larky/internal/platform/macos"
 	requestsvc "github.com/jtsang4/larky/internal/request"
+	"github.com/jtsang4/larky/internal/router"
 	"github.com/jtsang4/larky/internal/sidecar"
 	"github.com/jtsang4/larky/internal/state"
 	"github.com/jtsang4/larky/internal/updater"
@@ -78,7 +79,7 @@ Usage:
   larky update [--version <vX.Y.Z>] [--claude|--codex|--all|--binary-only]
   larky hook stop --platform claude|codex
   larky hook session-start --platform codex
-  larky delivery record --request-id <ID> --message-id <om_...> --chat-id <oc_...> --identity bot|user
+	  larky delivery record --request-id <ID> --message-id <om_...> [--message-id <om_...>] --chat-id <oc_...> --identity bot|user
   larky delivery fail --request-id <ID>
   larky handoff show --request-id <ID> --platform claude|codex --session-id <ID>
   larky sidecar run|status|stop
@@ -302,20 +303,25 @@ func runDelivery(args []string, stdout, stderr io.Writer) error {
 		flags := flag.NewFlagSet("delivery record", flag.ContinueOnError)
 		flags.SetOutput(stderr)
 		requestID := flags.String("request-id", "", "larky request id")
-		messageID := flags.String("message-id", "", "outbound Lark message id")
+		var messageIDs stringListFlag
+		flags.Var(&messageIDs, "message-id", "outbound Lark message id (repeat for every content/control message)")
 		chatID := flags.String("chat-id", "", "target Lark chat id")
 		identity := flags.String("identity", "", "identity returned by lark-im: bot or user")
 		degraded := flags.Bool("degraded", false, "plain-text fallback was used")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		if err := service.RecordDelivery(*requestID, *messageID, *chatID, *identity, *degraded); err != nil {
+		if err := service.RecordDeliveries(*requestID, messageIDs, *chatID, *identity, *degraded); err != nil {
+			return err
+		}
+		replayed, err := router.New(state.New(cfg.DatabasePath())).ReplayUnroutedForMessages(messageIDs)
+		if err != nil {
 			return err
 		}
 		if err := sidecar.Ensure(cfg, ""); err != nil {
 			return err
 		}
-		return writeJSON(stdout, map[string]any{"ok": true, "request_id": strings.ToUpper(*requestID), "message_id": *messageID})
+		return writeJSON(stdout, map[string]any{"ok": true, "request_id": strings.ToUpper(*requestID), "message_ids": []string(messageIDs), "replayed_unrouted": replayed})
 	case "fail":
 		flags := flag.NewFlagSet("delivery fail", flag.ContinueOnError)
 		flags.SetOutput(stderr)

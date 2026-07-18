@@ -52,6 +52,7 @@ func (r *Router) Handle(event contract.IncomingEvent) (Result, error) {
 		event.ReceivedAt = r.now().UTC()
 	}
 	var result Result
+	var dispositionErr error
 	err := r.store.Update(func(db *state.Database) error {
 		now := r.now().UTC()
 		expireRequests(db, now)
@@ -63,7 +64,8 @@ func (r *Router) Handle(event contract.IncomingEvent) (Result, error) {
 			db.Events[event.EventID] = state.ProcessedEvent{SeenAt: now, Source: event.Source, Synthetic: event.Synthetic}
 			db.Unrouted = appendBounded(db.Unrouted, event, 100)
 			result.Disposition = "unrouted"
-			return routeErr
+			dispositionErr = routeErr
+			return nil
 		}
 		if request.ExpiresAt.Before(now) || request.State == contract.StateExpired {
 			request.State = contract.StateExpired
@@ -124,7 +126,65 @@ func (r *Router) Handle(event contract.IncomingEvent) (Result, error) {
 		}
 		return nil
 	})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	return result, dispositionErr
+}
+
+// ReplayUnroutedForMessages retries events that arrived after a message was
+// visible in Lark but before all of that turn's message aliases were recorded.
+// It never broadens routing: only events that directly reference one of the
+// newly recorded IDs are replayed through the normal exact router.
+func (r *Router) ReplayUnroutedForMessages(messageIDs []string) (int, error) {
+	wanted := make(map[string]struct{}, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if messageID = strings.TrimSpace(messageID); messageID != "" {
+			wanted[messageID] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return 0, nil
+	}
+	var pending []contract.IncomingEvent
+	if err := r.store.Update(func(db *state.Database) error {
+		kept := db.Unrouted[:0]
+		for _, event := range db.Unrouted {
+			if referencesAny(event, wanted) {
+				pending = append(pending, event)
+				delete(db.Events, event.EventID)
+				continue
+			}
+			kept = append(kept, event)
+		}
+		db.Unrouted = kept
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	replayed := 0
+	for _, event := range pending {
+		result, err := r.Handle(event)
+		if err != nil {
+			if errors.Is(err, ErrUnrouted) {
+				continue
+			}
+			return replayed, err
+		}
+		if result.Disposition == "routed" || result.Disposition == "closed" || result.Disposition == "cancelled" {
+			replayed++
+		}
+	}
+	return replayed, nil
+}
+
+func referencesAny(event contract.IncomingEvent, wanted map[string]struct{}) bool {
+	for _, messageID := range []string{event.MessageID, event.ReplyTo, event.RootID} {
+		if _, ok := wanted[messageID]; ok && messageID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func findRequest(db *state.Database, event contract.IncomingEvent) (*contract.InteractionRequest, error) {

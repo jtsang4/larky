@@ -31,8 +31,12 @@ func TestCreateIsIdempotentAndDeliveryBuildsMapping(t *testing.T) {
 	if err := service.RecordDelivery(first.ID, "om-card", "oc-chat", "bot", false); err != nil {
 		t.Fatalf("identical delivery receipt should be idempotent: %v", err)
 	}
+	if err := service.RecordDeliveries(first.ID, []string{"om-card", "om-content", "om-content"}, "oc-chat", "bot", false); err != nil {
+		t.Fatalf("content aliases should extend an awaiting delivery: %v", err)
+	}
 	if err := store.View(func(db *state.Database) error {
-		if db.Requests[first.ID].State != contract.StatePendingReply || db.Deliveries["om-card"].RequestID != first.ID {
+		stored := db.Requests[first.ID]
+		if stored.State != contract.StatePendingReply || stored.MessageID != "om-card" || len(stored.MessageIDs) != 2 || db.Deliveries["om-card"].RequestID != first.ID || db.Deliveries["om-content"].RequestID != first.ID {
 			t.Fatalf("delivery mapping was not persisted: %#v", db)
 		}
 		return nil

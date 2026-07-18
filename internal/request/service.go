@@ -114,8 +114,17 @@ func (s *Service) Create(input CreateInput) (*contract.InteractionRequest, bool,
 }
 
 func (s *Service) RecordDelivery(requestID, messageID, chatID, senderIdentity string, degraded bool) error {
-	if requestID == "" || messageID == "" || chatID == "" || senderIdentity == "" {
-		return errors.New("request_id, message_id, chat_id, and sender identity are required")
+	return s.RecordDeliveries(requestID, []string{messageID}, chatID, senderIdentity, degraded)
+}
+
+// RecordDeliveries binds every Lark message emitted for one turn to the same
+// exact interaction request. The first ID is the primary/control delivery;
+// remaining IDs are aliases so replying to any content chunk routes back to
+// the originating agent session.
+func (s *Service) RecordDeliveries(requestID string, messageIDs []string, chatID, senderIdentity string, degraded bool) error {
+	messageIDs = uniqueNonEmpty(messageIDs)
+	if requestID == "" || len(messageIDs) == 0 || chatID == "" || senderIdentity == "" {
+		return errors.New("request_id, at least one message_id, chat_id, and sender identity are required")
 	}
 	senderIdentity = strings.ToLower(strings.TrimSpace(senderIdentity))
 	expectedIdentity := strings.ToLower(strings.TrimSpace(s.cfg.EventIdentity))
@@ -130,26 +139,40 @@ func (s *Service) RecordDelivery(requestID, messageID, chatID, senderIdentity st
 		if req == nil {
 			return fmt.Errorf("request %q not found", requestID)
 		}
-		if req.State == contract.StatePendingReply {
-			existing, ok := db.Deliveries[messageID]
-			if ok && req.MessageID == messageID && existing.RequestID == req.ID && existing.ChatID == chatID && existing.SenderIdentity == senderIdentity && existing.Degraded == degraded {
-				return nil
-			}
-			return fmt.Errorf("request %q already has a different recorded delivery", req.ID)
-		}
-		if req.State != contract.StatePendingDelivery {
+		if req.State != contract.StatePendingDelivery && req.State != contract.StatePendingReply {
 			return fmt.Errorf("request %q cannot record a delivery while in state %s", req.ID, req.State)
 		}
 		if req.ChatID != "" && req.ChatID != chatID {
 			return errors.New("delivery chat does not match request chat")
 		}
-		if existing, ok := db.Deliveries[messageID]; ok && existing.RequestID != req.ID {
-			return errors.New("message is already assigned to another request")
+		if req.State == contract.StatePendingReply && req.DegradedDelivery != degraded {
+			return fmt.Errorf("request %q already has a delivery with different degradation state", req.ID)
+		}
+		for _, messageID := range messageIDs {
+			if existing, ok := db.Deliveries[messageID]; ok {
+				if existing.RequestID != req.ID {
+					return errors.New("message is already assigned to another request")
+				}
+				if existing.ChatID != chatID || existing.SenderIdentity != senderIdentity || existing.Degraded != degraded {
+					return fmt.Errorf("message %q already has different delivery metadata", messageID)
+				}
+			}
 		}
 		now := s.now().UTC()
-		delivery := contract.Delivery{RequestID: req.ID, MessageID: messageID, ChatID: chatID, SenderIdentity: senderIdentity, Degraded: degraded, CreatedAt: now}
-		db.Deliveries[messageID] = delivery
-		req.MessageID = messageID
+		if req.MessageID != "" && !containsString(req.MessageIDs, req.MessageID) {
+			req.MessageIDs = append(req.MessageIDs, req.MessageID)
+		}
+		for _, messageID := range messageIDs {
+			if _, ok := db.Deliveries[messageID]; !ok {
+				db.Deliveries[messageID] = contract.Delivery{RequestID: req.ID, MessageID: messageID, ChatID: chatID, SenderIdentity: senderIdentity, Degraded: degraded, CreatedAt: now}
+			}
+			if !containsString(req.MessageIDs, messageID) {
+				req.MessageIDs = append(req.MessageIDs, messageID)
+			}
+		}
+		if req.MessageID == "" {
+			req.MessageID = messageIDs[0]
+		}
 		req.ChatID = chatID
 		req.DegradedDelivery = degraded
 		req.State = contract.StatePendingReply
@@ -403,7 +426,34 @@ func (s *Service) ExpireAwaitingReply(requestID string, platform contract.Platfo
 func cloneRequest(req *contract.InteractionRequest) *contract.InteractionRequest {
 	copy := *req
 	copy.AllowedSenderIDs = append([]string(nil), req.AllowedSenderIDs...)
+	copy.MessageIDs = append([]string(nil), req.MessageIDs...)
 	return &copy
+}
+
+func uniqueNonEmpty(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func Classify(message string) contract.RequestStatus {

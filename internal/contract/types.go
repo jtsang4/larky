@@ -67,6 +67,7 @@ type InteractionRequest struct {
 	TargetUserID      string        `json:"target_user_id,omitempty"`
 	AllowedSenderIDs  []string      `json:"allowed_sender_ids,omitempty"`
 	MessageID         string        `json:"message_id,omitempty"`
+	MessageIDs        []string      `json:"message_ids,omitempty"`
 	DegradedDelivery  bool          `json:"degraded_delivery,omitempty"`
 	AwayDetected      bool          `json:"away_detected"`
 	DisplayAsleep     bool          `json:"display_asleep,omitempty"`
