@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "larky",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Route Lark cards and message replies back to paused Claude Code sessions on an away Mac.",
   "author": {
     "name": "James Tsang",

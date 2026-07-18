@@ -61,7 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/jtsang4/larky/main/install.sh | sh
 larky update
 larky update --all
 larky update --codex
-larky update --version v0.1.0
+larky update --version v0.2.0
 ```
 
 升级后重启 Coding Agent 或新建任务，使新版本的 Skill 和 Hook 生效。
