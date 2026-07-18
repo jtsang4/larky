@@ -35,6 +35,7 @@ flowchart LR
 - Card 2.0 是首版默认交互面，包含继续、关闭、重试、取消、选项与文字表单契约。
 - `card.action.trigger` 与 `im.message.receive_v1` 各只有一个长期 consumer。
 - Stop Hook 会等到两个 consumer 都发出官方 ready marker 后才允许 Agent 发送卡片；`sidecar status` 会分别报告就绪状态。
+- Hook 会比较当前 binary 与 sidecar 的启动摘要；升级后自动重启旧 sidecar，避免旧进程回写并丢失新状态字段。
 - Claude Code 使用 Stop Hook + Plugin Monitor；Codex 使用 Stop Hook + 精确 session resume adapter。
 - request TTL、允许的飞书用户/群、回调 action allowlist、事件去重、原子 claim 和按 session 串行队列。
 - pending request 期间仅阻止系统 idle sleep，不阻止显示器休眠。
@@ -116,7 +117,7 @@ make build
 - L1：全部确定性单元与组件测试。
 - L2：`go vet` 与 race detector。
 - L3：真实构建产物、fake Lark、Claude/Codex exact-session 边界与宿主插件校验。
-- L4：真实 CoreGraphics away 状态、真实 Card 2.0 delivery、真实非 synthetic 卡片回调与原 session 恢复。
+- L4：真实 CoreGraphics away 状态、真实 Card 2.0 delivery、真实非 synthetic 卡片回调，以及原 session 已接受并完成 handoff；仍在队列中的回复不能通过。
 
 L4 需要一次真实的人机动作：分别让 Claude Code 和 Codex 在 Mac 已锁屏/息屏时自然触发 Stop Hook，然后从飞书点击卡片的非终止操作。回到电脑后运行：
 

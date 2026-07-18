@@ -31,6 +31,23 @@ func TestLiveCheckRejectsStaleCallback(t *testing.T) {
 	}
 }
 
+func TestLiveCheckRejectsCallbackStillQueuedForHandoff(t *testing.T) {
+	now := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
+	store := liveStore(t, now.Add(-10*time.Minute), now.Add(-time.Minute))
+	err := store.Update(func(db *state.Database) error {
+		key := state.InboxKey(contract.PlatformClaude, "session-1")
+		db.Inbox[key] = []*state.InboxItem{{Reply: contract.RoutedReply{EventID: "event-1"}}}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("queue callback: %v", err)
+	}
+
+	if _, err := LiveCheck(store, contract.PlatformClaude, now.Add(-2*time.Hour)); err == nil {
+		t.Fatal("LiveCheck() unexpectedly accepted callback before exact-session handoff")
+	}
+}
+
 func liveStore(t *testing.T, requestCreatedAt, callbackSeenAt time.Time) *state.Store {
 	t.Helper()
 	store := state.New(filepath.Join(t.TempDir(), "state.json"))
@@ -38,6 +55,7 @@ func liveStore(t *testing.T, requestCreatedAt, callbackSeenAt time.Time) *state.
 		db.Requests["REQ123"] = &contract.InteractionRequest{
 			ID:             "REQ123",
 			Platform:       contract.PlatformClaude,
+			SessionID:      "session-1",
 			MessageID:      "message-1",
 			AwayDetected:   true,
 			ScreenLocked:   true,
@@ -53,6 +71,7 @@ func liveStore(t *testing.T, requestCreatedAt, callbackSeenAt time.Time) *state.
 		db.Verification = append(db.Verification, contract.IncomingEvent{
 			EventID: "event-1",
 			Kind:    contract.IncomingCardAction,
+			Action:  "continue",
 			Source:  "lark-live",
 		})
 		return nil

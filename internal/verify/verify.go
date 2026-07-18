@@ -51,13 +51,15 @@ type CommandResult struct {
 }
 
 type LiveEvidence struct {
-	Platform      contract.Platform `json:"platform"`
-	RequestID     string            `json:"request_id"`
-	EventID       string            `json:"event_id"`
-	ObservedAt    time.Time         `json:"observed_at"`
-	DisplayAsleep bool              `json:"display_asleep"`
-	ScreenLocked  bool              `json:"screen_locked"`
-	AwayMethod    string            `json:"away_method"`
+	Platform        contract.Platform `json:"platform"`
+	RequestID       string            `json:"request_id"`
+	EventID         string            `json:"event_id"`
+	Action          string            `json:"action"`
+	ObservedAt      time.Time         `json:"observed_at"`
+	DisplayAsleep   bool              `json:"display_asleep"`
+	ScreenLocked    bool              `json:"screen_locked"`
+	AwayMethod      string            `json:"away_method"`
+	HandoffAccepted bool              `json:"handoff_accepted"`
 }
 
 type Receipt struct {
@@ -371,9 +373,13 @@ func LiveCheck(store *state.Store, platform contract.Platform, since time.Time) 
 			if !ok || event.Kind != contract.IncomingCardAction || event.Synthetic {
 				continue
 			}
+			if !liveAction(event.Action) || replyQueued(db, req, event.EventID) {
+				continue
+			}
 			candidate := &LiveEvidence{
-				Platform: platform, RequestID: req.ID, EventID: req.ClaimedEventID, ObservedAt: processed.SeenAt,
+				Platform: platform, RequestID: req.ID, EventID: req.ClaimedEventID, Action: event.Action, ObservedAt: processed.SeenAt,
 				DisplayAsleep: req.DisplayAsleep, ScreenLocked: req.ScreenLocked, AwayMethod: req.AwayMethod,
+				HandoffAccepted: true,
 			}
 			if best == nil || candidate.ObservedAt.After(best.ObservedAt) {
 				best = candidate
@@ -388,6 +394,24 @@ func LiveCheck(store *state.Store, platform contract.Platform, since time.Time) 
 		return LiveEvidence{}, fmt.Errorf("no fresh non-synthetic Card 2.0 callback evidence for %s; lock or sleep the Mac, let the real Stop hook send a card, then tap a non-terminal action", platform)
 	}
 	return *best, nil
+}
+
+func liveAction(action string) bool {
+	switch action {
+	case "continue", "retry", "answer", "submit_context":
+		return true
+	default:
+		return false
+	}
+}
+
+func replyQueued(db *state.Database, req *contract.InteractionRequest, eventID string) bool {
+	for _, item := range db.Inbox[state.InboxKey(req.Platform, req.SessionID)] {
+		if item.Reply.EventID == eventID {
+			return true
+		}
+	}
+	return false
 }
 
 func latestReceipt(root string) (string, Receipt, error) {

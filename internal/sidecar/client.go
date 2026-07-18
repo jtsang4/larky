@@ -19,17 +19,32 @@ import (
 
 func Ensure(cfg config.Config, executable string) error {
 	requireEvents := os.Getenv("LARKY_EVENT_SOURCE") != "disabled"
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	err := Ping(ctx, cfg)
-	cancel()
-	if err == nil {
-		return waitUntilReady(cfg, requireEvents, time.Now().Add(8*time.Second))
-	}
 	if executable == "" {
 		var resolveErr error
 		executable, resolveErr = os.Executable()
 		if resolveErr != nil {
 			return resolveErr
+		}
+	}
+	digest, err := fileDigest(executable)
+	if err != nil {
+		return fmt.Errorf("digest current executable: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	status, err := GetStatus(ctx, cfg)
+	cancel()
+	if err == nil {
+		if status.ExecutableDigest == digest {
+			return waitUntilReady(cfg, requireEvents, time.Now().Add(8*time.Second))
+		}
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		stopErr := Stop(stopCtx, cfg)
+		stopCancel()
+		if stopErr != nil {
+			return fmt.Errorf("stop outdated sidecar: %w", stopErr)
+		}
+		if err := waitUntilStopped(cfg, time.Now().Add(3*time.Second)); err != nil {
+			return err
 		}
 	}
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
@@ -50,6 +65,19 @@ func Ensure(cfg config.Config, executable string) error {
 	_ = cmd.Process.Release()
 	_ = logFile.Close()
 	return waitUntilReady(cfg, requireEvents, time.Now().Add(8*time.Second))
+}
+
+func waitUntilStopped(cfg config.Config, deadline time.Time) error {
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		err := Ping(ctx, cfg)
+		cancel()
+		if err != nil {
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return errors.New("outdated sidecar did not stop")
 }
 
 func waitUntilReady(cfg config.Config, requireEvents bool, deadline time.Time) error {

@@ -139,6 +139,9 @@ cat >/dev/null
 	if !status.EventsEnabled || !status.EventsReady || len(status.EventConsumers) != 2 {
 		t.Fatalf("event readiness was not reported: %#v", status)
 	}
+	if status.ExecutableDigest == "" {
+		t.Fatalf("sidecar executable digest was not reported: %#v", status)
+	}
 	for key, ready := range status.EventConsumers {
 		if !ready {
 			t.Fatalf("consumer %s was not ready: %#v", key, status)

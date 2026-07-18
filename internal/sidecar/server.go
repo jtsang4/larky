@@ -35,12 +35,13 @@ type Options struct {
 }
 
 type Server struct {
-	cfg       config.Config
-	store     *state.Store
-	router    *router.Router
-	logger    *log.Logger
-	startedAt time.Time
-	cancel    context.CancelFunc
+	cfg              config.Config
+	store            *state.Store
+	router           *router.Router
+	logger           *log.Logger
+	startedAt        time.Time
+	cancel           context.CancelFunc
+	executableDigest string
 
 	mu            sync.Mutex
 	subscriptions map[string]struct{}
@@ -85,10 +86,18 @@ func Run(ctx context.Context, cfg config.Config, options Options) error {
 		logger = log.New(os.Stderr, "larky: ", log.LstdFlags|log.Lmicroseconds)
 	}
 	store := state.New(cfg.DatabasePath())
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve sidecar executable: %w", err)
+	}
+	digest, err := fileDigest(executable)
+	if err != nil {
+		return fmt.Errorf("digest sidecar executable: %w", err)
+	}
 	eventsEnabled := !options.DisableEvents && os.Getenv("LARKY_EVENT_SOURCE") != "disabled"
 	server := &Server{
 		cfg: cfg, store: store, router: router.New(store), logger: logger,
-		startedAt: time.Now().UTC(), cancel: cancel,
+		startedAt: time.Now().UTC(), cancel: cancel, executableDigest: digest,
 		subscriptions: make(map[string]struct{}), workers: make(map[string]struct{}),
 		eventsEnabled: eventsEnabled, eventReady: make(map[string]bool),
 	}
@@ -248,7 +257,7 @@ func (s *Server) writeResponse(conn net.Conn, value response) bool {
 
 func (s *Server) status() (Status, error) {
 	status := Status{
-		PID: os.Getpid(), StartedAt: s.startedAt.Format(time.RFC3339),
+		PID: os.Getpid(), StartedAt: s.startedAt.Format(time.RFC3339), ExecutableDigest: s.executableDigest,
 		EventsEnabled: s.eventsEnabled, EventConsumers: make(map[string]bool), PendingByKind: make(map[string]int),
 	}
 	s.mu.Lock()

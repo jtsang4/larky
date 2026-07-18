@@ -24,11 +24,12 @@ type response struct {
 }
 
 type Status struct {
-	PID            int             `json:"pid"`
-	StartedAt      string          `json:"started_at"`
-	Subscribers    int             `json:"subscribers"`
-	EventsEnabled  bool            `json:"events_enabled"`
-	EventsReady    bool            `json:"events_ready"`
-	EventConsumers map[string]bool `json:"event_consumers"`
-	PendingByKind  map[string]int  `json:"pending_by_kind"`
+	PID              int             `json:"pid"`
+	StartedAt        string          `json:"started_at"`
+	ExecutableDigest string          `json:"executable_digest"`
+	Subscribers      int             `json:"subscribers"`
+	EventsEnabled    bool            `json:"events_enabled"`
+	EventsReady      bool            `json:"events_ready"`
+	EventConsumers   map[string]bool `json:"event_consumers"`
+	PendingByKind    map[string]int  `json:"pending_by_kind"`
 }
