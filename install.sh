@@ -221,6 +221,21 @@ ln -sfn "$current_link/codex/plugins" "$codex_marketplace/plugins"
 
 if [ "$want_claude" -eq 1 ]; then
   say "Installing or updating the Claude Code plugin..."
+  claude_marketplaces="$temporary/claude-marketplaces.json"
+  claude plugin marketplace list --json > "$claude_marketplaces"
+  configured_claude_root=$(awk '
+    /"name"[[:space:]]*:[[:space:]]*"larky"/ { found=1; next }
+    found && /"path"[[:space:]]*:/ {
+      line=$0
+      sub(/^.*"path"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      print line
+      exit
+    }
+  ' "$claude_marketplaces")
+  if grep -q '"name"[[:space:]]*:[[:space:]]*"larky"' "$claude_marketplaces" && [ "$configured_claude_root" != "$claude_marketplace" ]; then
+    claude plugin marketplace remove larky >/dev/null
+  fi
   claude plugin marketplace add "$claude_marketplace" --scope user >/dev/null
   claude plugin marketplace update larky >/dev/null
   if claude plugin list --json 2>/dev/null | grep -q '"id"[[:space:]]*:[[:space:]]*"larky@larky"'; then
@@ -232,6 +247,11 @@ fi
 
 if [ "$want_codex" -eq 1 ]; then
   say "Installing or updating the Codex plugin..."
+  configured_codex_root=$(codex plugin marketplace list | awk '$1 == "larky" { print $2; exit }')
+  expected_codex_root=$(CDPATH= cd -- "$codex_marketplace" && pwd -P)
+  if [ -n "$configured_codex_root" ] && [ "$configured_codex_root" != "$expected_codex_root" ]; then
+    codex plugin marketplace remove larky >/dev/null
+  fi
   codex plugin marketplace add "$codex_marketplace" --json >/dev/null
   codex plugin marketplace upgrade larky >/dev/null 2>&1 || true
   codex plugin add larky@larky --json >/dev/null
