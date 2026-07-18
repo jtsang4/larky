@@ -261,7 +261,7 @@ func TestBuiltCodexHookRoundTripUsesTheOriginalHookProcess(t *testing.T) {
 		t.Fatalf("first built Hook: %v\n%s", err, output)
 	}
 	var first contract.HookDecision
-	if err := json.Unmarshal(output, &first); err != nil || first.Decision != "block" || !strings.Contains(first.Reason, "Card 2.0") {
+	if err := json.Unmarshal(output, &first); err != nil || first.Decision != "block" || !strings.Contains(first.Reason, "larky delivery show --request-id") || strings.Contains(first.Reason, "Built process verification passed") || len(first.Reason) > 240 {
 		t.Fatalf("first built Hook output: %#v parse=%v raw=%s", first, err, output)
 	}
 
@@ -276,6 +276,14 @@ func TestBuiltCodexHookRoundTripUsesTheOriginalHookProcess(t *testing.T) {
 		return nil
 	}); err != nil || requestID == "" {
 		t.Fatalf("built Hook request was not persisted: id=%q err=%v", requestID, err)
+	}
+	output, err = run("", "delivery", "show", "--request-id", requestID)
+	if err != nil {
+		t.Fatalf("show built delivery: %v\n%s", err, output)
+	}
+	var plan contract.DeliveryPlan
+	if err := json.Unmarshal(output, &plan); err != nil || plan.TurnOutput != "Built process verification passed." || plan.TurnOutputPartCount != 1 || !plan.RequireContextForm {
+		t.Fatalf("built delivery plan lost the turn output: %#v parse=%v raw=%s", plan, err, output)
 	}
 	output, err = run("", "delivery", "record", "--request-id", requestID, "--message-id", "om-built", "--chat-id", "oc-chat", "--identity", "bot")
 	if err != nil {
@@ -310,7 +318,7 @@ func TestBuiltCodexHookRoundTripUsesTheOriginalHookProcess(t *testing.T) {
 		t.Fatalf("waiting built Hook: %v\n%s", err, waitOutput.String())
 	}
 	var resumed contract.HookDecision
-	if err := json.Unmarshal(waitOutput.Bytes(), &resumed); err != nil || resumed.Decision != "block" || !strings.Contains(resumed.Reason, "this exact Codex task") || !strings.Contains(resumed.Reason, "fix the built test") {
+	if err := json.Unmarshal(waitOutput.Bytes(), &resumed); err != nil || resumed.Decision != "block" || !strings.Contains(resumed.Reason, "[Larky · 飞书回复 · "+requestID+"]") || !strings.Contains(resumed.Reason, "fix the built test") || strings.Contains(resumed.Reason, "callback-token") || strings.Contains(resumed.Reason, `"schema":"2.0"`) {
 		t.Fatalf("built Hook did not return the routed continuation: %#v parse=%v raw=%s", resumed, err, waitOutput.String())
 	}
 	if _, err := os.Stat(codexSentinel); !os.IsNotExist(err) {
