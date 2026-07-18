@@ -35,10 +35,23 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f -name '*.tar.gz' -exec cp {} release/ \;
+          cp install.sh release/install.sh
+          sh -n release/install.sh
+          cd release
+          sha256sum *.tar.gz > checksums.txt
       - uses: softprops/action-gh-release@v3
         with:
-          files: artifacts/*.tar.gz
+          generate_release_notes: true
+          files: |
+            release/*.tar.gz
+            release/checksums.txt
+            release/install.sh

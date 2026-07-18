@@ -21,6 +21,7 @@ import (
 	requestsvc "github.com/jtsang4/larky/internal/request"
 	"github.com/jtsang4/larky/internal/sidecar"
 	"github.com/jtsang4/larky/internal/state"
+	"github.com/jtsang4/larky/internal/updater"
 	"github.com/jtsang4/larky/internal/verify"
 )
 
@@ -44,6 +45,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return runConfig(args[1:], stdout, stderr)
 	case "doctor":
 		return runDoctor(stdout)
+	case "update":
+		return runUpdate(ctx, args[1:], stdout, stderr)
 	case "hook":
 		return runHook(args[1:], stdin, stdout)
 	case "delivery":
@@ -69,6 +72,7 @@ Usage:
   larky config set (--chat-id <oc_...> | --target-user <ou_...>) --allowed-user <ou_...>
   larky config show
   larky doctor
+  larky update [--version <vX.Y.Z>] [--claude|--codex|--all|--binary-only]
   larky hook stop --platform claude|codex
   larky delivery record --request-id <ID> --message-id <om_...> --chat-id <oc_...> --identity bot|user
   larky delivery fail --request-id <ID>
@@ -77,6 +81,45 @@ Usage:
   larky debug ingest --event-key <key> < event.json
   larky verify plan|run|status
 `)
+}
+
+func runUpdate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("update", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	version := flags.String("version", "", "release version, for example v0.2.0 (defaults to latest)")
+	claude := flags.Bool("claude", false, "install or update the Claude Code plugin")
+	codex := flags.Bool("codex", false, "install or update the Codex plugin")
+	all := flags.Bool("all", false, "install or update both plugins")
+	binaryOnly := flags.Bool("binary-only", false, "update only the larky command")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("update does not accept positional arguments")
+	}
+	if *binaryOnly && (*claude || *codex || *all) {
+		return errors.New("--binary-only cannot be combined with plugin selection flags")
+	}
+
+	installerArgs := make([]string, 0, 6)
+	if *version != "" {
+		installerArgs = append(installerArgs, "--version", *version)
+	}
+	if *binaryOnly {
+		installerArgs = append(installerArgs, "--binary-only")
+	} else if *all {
+		installerArgs = append(installerArgs, "--all")
+	} else {
+		if *claude {
+			installerArgs = append(installerArgs, "--claude")
+		}
+		if *codex {
+			installerArgs = append(installerArgs, "--codex")
+		}
+	}
+
+	scriptURL := strings.TrimSpace(os.Getenv("LARKY_INSTALL_SCRIPT_URL"))
+	return (updater.Runner{ScriptURL: scriptURL}).Run(ctx, Version, installerArgs, stdout, stderr)
 }
 
 func runAway(output io.Writer) error {

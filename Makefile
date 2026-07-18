@@ -3,7 +3,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOARCH := $(shell $(GO) env GOARCH)
 PLATFORM_BINARY := dist/larky-darwin-$(GOARCH)
 
-.PHONY: build test race vet validate verify package clean
+.PHONY: build test race vet validate verify package test-install clean
 
 build:
 	mkdir -p dist
@@ -29,7 +29,10 @@ verify: build
 	./dist/larky verify run --through 3
 
 package: build
-	./scripts/package.sh
+	./scripts/package.sh "$(VERSION)"
+
+test-install: package
+	./scripts/test-install.sh
 
 clean:
 	$(GO) clean -cache -testcache
