@@ -34,3 +34,16 @@ func TestUpdateRejectsConflictingSelection(t *testing.T) {
 		t.Fatalf("expected selection conflict, got %v", err)
 	}
 }
+
+func TestConfigTargetDefaultsAllowedSender(t *testing.T) {
+	t.Setenv("LARKY_STATE_DIR", t.TempDir())
+	var stdout bytes.Buffer
+	if err := Run(context.Background(), []string{"config", "set", "--target-user", "ou_target"}, strings.NewReader(""), &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"target_user_id": "ou_target"`) ||
+		!strings.Contains(stdout.String(), `"allowed_sender_ids": [`) ||
+		!strings.Contains(stdout.String(), `"ou_target"`) {
+		t.Fatalf("unexpected config output: %s", stdout.String())
+	}
+}

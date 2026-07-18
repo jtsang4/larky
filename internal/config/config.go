@@ -1,10 +1,12 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -69,6 +71,69 @@ func Load() (Config, error) {
 		cfg.EventIdentity = "bot"
 	}
 	return cfg, nil
+}
+
+// ResolveRuntime fills the normal single-user defaults from lark-cli's current
+// logged-in user. Explicit Larky config and environment overrides still win.
+func ResolveRuntime(ctx context.Context, cfg Config) (Config, error) {
+	if len(cfg.AllowedSenderIDs) == 0 && cfg.TargetUserID != "" {
+		cfg.AllowedSenderIDs = []string{cfg.TargetUserID}
+	}
+	if (cfg.ChatID != "" || cfg.TargetUserID != "") && len(cfg.AllowedSenderIDs) > 0 {
+		return cfg, nil
+	}
+
+	openID, err := currentUserOpenID(ctx, cfg.LarkCLI)
+	if err != nil {
+		return Config{}, fmt.Errorf("discover current Lark user from lark-cli: %w", err)
+	}
+	if cfg.ChatID == "" && cfg.TargetUserID == "" {
+		cfg.TargetUserID = openID
+	}
+	if len(cfg.AllowedSenderIDs) == 0 {
+		cfg.AllowedSenderIDs = []string{openID}
+	}
+	return cfg, nil
+}
+
+func currentUserOpenID(ctx context.Context, cli string) (string, error) {
+	if strings.TrimSpace(cli) == "" {
+		cli = "lark-cli"
+	}
+	command := exec.CommandContext(ctx, cli, "auth", "status", "--json")
+	command.Env = append(os.Environ(),
+		"LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1",
+		"LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1",
+	)
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("run %s auth status --json: %w", cli, err)
+	}
+	var status struct {
+		Identities struct {
+			User struct {
+				OpenID string `json:"openId"`
+			} `json:"user"`
+		} `json:"identities"`
+		Data struct {
+			Identities struct {
+				User struct {
+					OpenID string `json:"openId"`
+				} `json:"user"`
+			} `json:"identities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(output, &status); err != nil {
+		return "", fmt.Errorf("parse lark-cli auth status: %w", err)
+	}
+	openID := strings.TrimSpace(status.Identities.User.OpenID)
+	if openID == "" {
+		openID = strings.TrimSpace(status.Data.Identities.User.OpenID)
+	}
+	if openID == "" {
+		return "", errors.New("lark-cli has no logged-in user open_id")
+	}
+	return openID, nil
 }
 
 func Save(cfg Config) error {

@@ -42,7 +42,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "away":
 		return runAway(stdout)
 	case "config":
-		return runConfig(args[1:], stdout, stderr)
+		return runConfig(ctx, args[1:], stdout, stderr)
 	case "doctor":
 		return runDoctor(stdout)
 	case "update":
@@ -69,7 +69,7 @@ func usage(output io.Writer) {
 
 Usage:
   larky away
-  larky config set (--chat-id <oc_...> | --target-user <ou_...>) --allowed-user <ou_...>
+  larky config set [--chat-id <oc_...> | --target-user <ou_...>] [--allowed-user <ou_...>]
   larky config show
   larky doctor
   larky update [--version <vX.Y.Z>] [--claude|--codex|--all|--binary-only]
@@ -130,7 +130,7 @@ func runAway(output io.Writer) error {
 	return writeJSON(output, value)
 }
 
-func runConfig(args []string, stdout, stderr io.Writer) error {
+func runConfig(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("config requires set or show")
 	}
@@ -140,6 +140,10 @@ func runConfig(args []string, stdout, stderr io.Writer) error {
 	}
 	switch args[0] {
 	case "show":
+		cfg, err = config.ResolveRuntime(ctx, cfg)
+		if err != nil {
+			return err
+		}
 		return writeJSON(stdout, cfg)
 	case "set":
 		flags := flag.NewFlagSet("config set", flag.ContinueOnError)
@@ -159,6 +163,9 @@ func runConfig(args []string, stdout, stderr io.Writer) error {
 		}
 		if *targetUserID != "" {
 			cfg.TargetUserID = *targetUserID
+			if len(users) == 0 {
+				cfg.AllowedSenderIDs = []string{*targetUserID}
+			}
 		}
 		if len(users) > 0 {
 			cfg.AllowedSenderIDs = append([]string(nil), users...)
@@ -193,12 +200,17 @@ func runDoctor(output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	resolved, resolveErr := config.ResolveRuntime(context.Background(), cfg)
+	if resolveErr == nil {
+		cfg = resolved
+	}
 	checks := []doctorCheck{{Name: "macOS", OK: runtime.GOOS == "darwin", Detail: runtime.GOOS}}
 	for _, item := range []struct{ name, command string }{{"lark-cli", cfg.LarkCLI}, {"codex", cfg.CodexCLI}, {"claude", "claude"}} {
 		path, findErr := exec.LookPath(item.command)
 		checks = append(checks, doctorCheck{Name: item.name, OK: findErr == nil, Detail: first(path, errorText(findErr))})
 	}
 	checks = append(checks,
+		doctorCheck{Name: "current Lark user", OK: resolveErr == nil, Detail: errorText(resolveErr)},
 		doctorCheck{Name: "notification target", OK: cfg.ChatID != "" || cfg.TargetUserID != "", Detail: first(masked(cfg.ChatID), masked(cfg.TargetUserID))},
 		doctorCheck{Name: "allowed sender", OK: len(cfg.AllowedSenderIDs) > 0, Detail: fmt.Sprintf("%d configured", len(cfg.AllowedSenderIDs))},
 	)
@@ -227,6 +239,10 @@ func runHook(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	cfg, err = config.ResolveRuntime(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -248,6 +264,10 @@ func runDelivery(args []string, stdout, stderr io.Writer) error {
 		return errors.New("delivery requires record or fail")
 	}
 	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cfg, err = config.ResolveRuntime(context.Background(), cfg)
 	if err != nil {
 		return err
 	}
@@ -297,6 +317,10 @@ func runSidecar(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	switch args[0] {
 	case "run":
+		cfg, err = config.ResolveRuntime(ctx, cfg)
+		if err != nil {
+			return err
+		}
 		flags := flag.NewFlagSet("sidecar run", flag.ContinueOnError)
 		flags.SetOutput(stderr)
 		background := flags.Bool("background-child", false, "internal")
@@ -341,6 +365,10 @@ func runSubscribe(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
+	cfg, err = config.ResolveRuntime(ctx, cfg)
+	if err != nil {
+		return err
+	}
 	if err := sidecar.Ensure(cfg, ""); err != nil {
 		return err
 	}
@@ -366,6 +394,10 @@ func runDebug(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cfg, err = config.ResolveRuntime(ctx, cfg)
 	if err != nil {
 		return err
 	}
