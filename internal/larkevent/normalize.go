@@ -69,8 +69,11 @@ func normalizeCard(value map[string]any, event *contract.IncomingEvent) {
 	form := parseObject(stringValue(value, "form_value"))
 	event.Text = firstNonEmpty(
 		stringFromMap(form, "context"),
+		stringFromMap(form, "context_value"),
 		stringFromMap(form, "answer"),
+		stringFromMap(form, "answer_value"),
 		stringFromMap(form, "input"),
+		stringFromMap(form, "input_value"),
 		stringValue(value, "input_value"),
 	)
 	if event.Action == "" && len(form) > 0 {

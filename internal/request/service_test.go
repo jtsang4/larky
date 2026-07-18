@@ -153,6 +153,37 @@ func TestReplyHandoffRequiresTheExactRequestSessionAndEvent(t *testing.T) {
 	}
 }
 
+func TestArchivedHandoffRecoversCard20ContextValue(t *testing.T) {
+	cfg := config.Config{ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"}, RequestTTL: time.Hour, EventIdentity: "bot"}
+	store := state.New(filepath.Join(t.TempDir(), "state.json"))
+	service := NewService(store, cfg)
+	req, _, err := service.Create(CreateInput{Platform: contract.PlatformClaude, SessionID: "session", Message: "Done."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"type":"card.action.trigger","event_id":"evt-card20","operator_id":"ou-user","message_id":"om-card","chat_id":"oc-chat","action_name":"submit_context","form_value":"{\"context_value\":\"好的，这是我的回复。\"}"}`)
+	if err := store.Update(func(db *state.Database) error {
+		db.Requests[req.ID].State = contract.StateResumed
+		db.Requests[req.ID].ClaimedEventID = "evt-card20"
+		db.Requests[req.ID].HandoffEventID = "evt-card20"
+		db.Handoffs[req.ID] = contract.RoutedReply{
+			RequestID: req.ID, Platform: contract.PlatformClaude, SessionID: "session",
+			EventID: "evt-card20", Action: "submit_context",
+		}
+		db.Verification = append(db.Verification, contract.IncomingEvent{
+			EventID: "evt-card20", Kind: contract.IncomingCardAction, ReceivedAt: time.Now(), Raw: raw,
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err := service.GetHandoffReplyByID(req.ID)
+	if err != nil || reply == nil || reply.Text != "好的，这是我的回复。" {
+		t.Fatalf("archived Card 2.0 input was not recovered: %#v err=%v", reply, err)
+	}
+}
+
 func TestLatestForSessionDoesNotCrossTurns(t *testing.T) {
 	now := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
 	cfg := config.Config{ChatID: "oc-chat", AllowedSenderIDs: []string{"ou-user"}, RequestTTL: time.Hour}

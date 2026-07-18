@@ -37,3 +37,14 @@ func TestNormalizeFormAndMessage(t *testing.T) {
 		t.Fatalf("unexpected message event: %#v", event)
 	}
 }
+
+func TestNormalizeCard20FormContextValue(t *testing.T) {
+	raw := []byte(`{"type":"card.action.trigger","event_id":"715e96d5a85551b93312b402ab307f7b","operator_id":"ou-user","message_id":"om-card","chat_id":"oc-chat","token":"callback-token","action_tag":"button","action_name":"submit_context","form_value":"{\"context_value\":\"好的，这是我的回复。\"}"}`)
+	event, err := Normalize("card.action.trigger", raw, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Action != "submit_context" || event.Text != "好的，这是我的回复。" {
+		t.Fatalf("unexpected Card 2.0 form event: %#v", event)
+	}
+}

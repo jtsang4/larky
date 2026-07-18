@@ -14,6 +14,7 @@ import (
 
 	"github.com/jtsang4/larky/internal/config"
 	"github.com/jtsang4/larky/internal/contract"
+	"github.com/jtsang4/larky/internal/larkevent"
 	"github.com/jtsang4/larky/internal/state"
 )
 
@@ -323,6 +324,7 @@ func (s *Service) GetHandoffReply(requestID string, platform contract.Platform, 
 			return fmt.Errorf("archived handoff for request %q does not match its exact session evidence", requestID)
 		}
 		copy := reply
+		recoverArchivedReply(db, &copy)
 		result = &copy
 		return nil
 	})
@@ -348,10 +350,53 @@ func (s *Service) GetHandoffReplyByID(requestID string) (*contract.RoutedReply, 
 			return fmt.Errorf("archived handoff for request %q does not match its exact session evidence", requestID)
 		}
 		copy := reply
+		recoverArchivedReply(db, &copy)
 		result = &copy
 		return nil
 	})
 	return result, err
+}
+
+// recoverArchivedReply lets a newer event normalizer repair fields that an
+// older installed binary omitted before archiving the exact-session handoff.
+// The event identity and request/session binding were already verified when
+// the handoff was recorded; only missing transport fields are backfilled.
+func recoverArchivedReply(db *state.Database, reply *contract.RoutedReply) {
+	if reply == nil {
+		return
+	}
+	for _, event := range db.Verification {
+		if event.EventID != reply.EventID || len(event.Raw) == 0 {
+			continue
+		}
+		eventKey := ""
+		switch event.Kind {
+		case contract.IncomingCardAction:
+			eventKey = "card.action.trigger"
+		case contract.IncomingMessage:
+			eventKey = "im.message.receive_v1"
+		}
+		if eventKey == "" {
+			return
+		}
+		normalized, err := larkevent.Normalize(eventKey, event.Raw, event.ReceivedAt)
+		if err != nil || normalized.EventID != reply.EventID {
+			return
+		}
+		if reply.Text == "" {
+			reply.Text = normalized.Text
+		}
+		if reply.ChoiceID == "" {
+			reply.ChoiceID = normalized.ChoiceID
+		}
+		if reply.CallbackToken == "" {
+			reply.CallbackToken = normalized.CallbackToken
+		}
+		if reply.CardContent == "" {
+			reply.CardContent = normalized.CardContent
+		}
+		return
+	}
 }
 
 func (s *Service) takeReply(requestID, eventID string, platform contract.Platform, sessionID string, mode contract.HandoffMode) (*contract.RoutedReply, error) {
